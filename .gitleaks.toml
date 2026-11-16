@@ -1,0 +1,20 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated build outputs and installed dependencies, never product source"
+paths = [
+  '''(^|/)(target|node_modules|\.git|\.reports|\.local|\.omx)/''',
+  '''(^|/)web/project\.inlang/cache/''',
+  '''(^|/)web/storybook-static/''',
+]
+
+# The scip-typescript package name puts the keyword "sourcegraph" in mise.toml; its 40-hex
+# commit pins are public revisions, not Sourcegraph tokens.
+[[allowlists]]
+description = "Commit pins of mise.toml"
+targetRules = ["sourcegraph-access-token"]
+condition = "AND"
+paths = ['''^mise\.toml$''']
+regexTarget = "line"
+regexes = ['''"rev:[0-9a-f]{40}"''']

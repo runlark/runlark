@@ -1,0 +1,30 @@
+name: Sych
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read # Read the current PR head and inline review comments.
+  issues: read # Read the bot's issue-thread summary; no comment writes.
+
+concurrency:
+  group: sych-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  sych:
+    name: sych
+    runs-on: runlark-review
+    timeout-minutes: 360
+    steps:
+      # Separate workflow: CI must finish before the external reviewer receives its evidence.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Wait for the external advisory review of this head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SYCH_WAIT_SECONDS: "21000"
+        run: scripts/wait-sych "$PR_NUMBER"

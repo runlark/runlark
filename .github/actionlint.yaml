@@ -1,0 +1,6 @@
+# Repository-scoped ARC runner sets in petinfra.
+self-hosted-runner:
+  labels:
+    - runlark-ci
+    - runlark-review
+    - runlark-publish

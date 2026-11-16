@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Install only this repository's tools, not unrelated ancestor/global selections.
+mise install jq
+configs="$(mise config ls --json)"
+# The single-quoted variables belong to jq, not Bash.
+# shellcheck disable=SC2016
+selected="$(mise exec jq -- jq -r --arg file "${PWD}/mise.toml" '.[] | select(.path == $file) | .tools[]' <<<"${configs}")"
+[[ -n "${selected}" ]]
+tools=()
+while IFS= read -r tool; do
+    tools+=("${tool}")
+done <<<"${selected}"
+mise install "${tools[@]}"
+mise exec -- npm ci
+git config --local core.hooksPath .githooks

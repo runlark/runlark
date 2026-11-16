@@ -1,0 +1,29 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = true
+
+[*.rs]
+indent_size = 4
+
+[{*.sh,scripts/*,.githooks/*}]
+indent_size = 4
+
+# Markdown list indentation is owned by Oxfmt, not a fixed space multiple.
+[*.md]
+indent_size = unset
+
+[.agents/skills/impeccable/LICENSE]
+indent_size = unset
+
+# The font's upstream OFL text is kept verbatim.
+[docs/brand/brandbook-source/fonts/OFL.txt]
+trim_trailing_whitespace = false
+
+[*.cmd]
+end_of_line = crlf

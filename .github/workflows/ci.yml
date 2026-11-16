@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: "1"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  check:
+    name: check
+    runs-on: runlark-ci
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      # On a cache hit neither mise nor the tools come from GitHub's release downloads, which have
+      # failed for hours at a time. The action installs only jq; the post step saves the cache with
+      # every tool `scripts/setup` installs after it.
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          install_args: jq
+          version: "2026.10.19"
+          # The mise binary in that release's signed linux-x64 archive; a version bump changes it.
+          sha256: 3162760f40b6b5f706c60641e4ef5ee7322bc6c54f72fc26a7111b337aa18d9d
+          cache_save: ${{ github.ref == 'refs/heads/main' }}
+          cache_save_post: true
+      - name: Set up pinned tools and dependencies
+        run: scripts/setup
+      - name: Run complete gate and write Sych evidence
+        run: mise exec -- scripts/ci-check
+      # The account's artifact storage quota is exhausted; a failed upload is missing Sych
+      # evidence (reported by Sych as CI_ARTIFACT_MISSING), not a failed gate.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        continue-on-error: true
+        with:
+          name: sych-reports
+          path: |
+            .reports/outcomes.json
+            .reports/sych-ci.json
+          if-no-files-found: error
+          retention-days: 7

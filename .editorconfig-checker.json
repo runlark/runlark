@@ -1,0 +1,13 @@
+{
+  "Exclude": [
+    "^\\.git/",
+    "^target/",
+    "(^|/)node_modules/",
+    "^\\.reports/",
+    "^\\.local/",
+    "^\\.agents/skills/feod/scripts/feod\\.mjs$",
+    "^\\.agents/skills/modern-web-guidance/LICENSE$",
+    "^web/(dist|\\.generated)/",
+    "^web/storybook-static/"
+  ]
+}
