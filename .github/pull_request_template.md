@@ -5,6 +5,7 @@ Explain the consumer-visible result and why this is the smallest complete change
 ## Verification
 
 - [ ] `just check` passes (replace this line with the actual command/result).
+- [ ] New commits and the PR title follow Conventional Commits; commit-msg and pre-push hooks pass.
 - [ ] The changed runtime path was exercised, including relevant failure behavior.
 - [ ] Documentation and any affected contracts/callers are updated.
 - [ ] Gate policy unchanged, or the person asked for it and `easement review --base origin/main` output is attached (`easement.yml`, `easement.baseline.yml`, `file-limit.baseline`).

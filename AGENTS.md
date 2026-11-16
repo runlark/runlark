@@ -49,7 +49,13 @@ new product and land with evidence, not grant speculative future imports.
 4. Product source must add actual compiler, architecture, behavior and smoke checks in the same PR;
    `scripts/bootstrap-scope.mjs` fails closed until that integration. Do not simply delete the guard.
 5. Run `mise exec -- just check` and exercise the real changed path and failures before pushing.
-   Hooks: pre-commit `just lint`, pre-push `just check`; local and CI use one gate.
+   Conventional Commits are mandatory: `type(scope)!: description` (scope and `!` optional).
+   Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.
+   Separate any body/footer from the header with a blank line. Use `revert: ...` for reverts;
+   finish fixup/squash work before pushing. Keep PR titles conventional for squash merge.
+   Hooks: pre-commit `just lint`, commit-msg validates the message, pre-push validates every
+   outgoing unpublished commit before `just check`. Fetch the configured remote before a new
+   branch push; already-published history is preserved. Never bypass a failing hook.
 6. Open a PR. After every push wait for green `check` and `scripts/wait-sych` for the current head.
    Read all findings, UNKNOWN and coverage gaps; fix defects and explain accepted risks/false positives.
    A summary's availability is not approval. Never merge with missing review or failing checks.

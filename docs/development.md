@@ -12,6 +12,29 @@ mise exec -- just check
 поведение и failure paths → `mise exec -- just check` → PR → green CI и current-head Sych.
 Не reset/clean чужие изменения. Не bypass hooks, checks, timeout или review gaps.
 
+## Conventional Commits
+
+Новые коммиты обязательно следуют [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/):
+`type(scope)!: description`. Scope и `!` необязательны; описание непустое.
+Типы проекта: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
+Регистр type не ограничен; для единообразия используем lowercase. Тело и footer начинаются после
+пустой строки. Breaking change отмечается `!` или footer `BREAKING CHANGE: ...`.
+
+Примеры: `feat(board): add task creation`, `fix(local): reconcile interrupted run`,
+`chore(git): enforce Conventional Commits`, `feat(api)!: require command revision`.
+Revert оформляется как `revert: ...`; незавершённые `fixup!`/`squash!` не отправляются.
+Заголовок PR тоже должен следовать формату, чтобы squash merge сохранил его.
+
+`scripts/setup` включает `.githooks`: `commit-msg` проверяет сообщение до создания коммита;
+`pre-push` повторно проверяет все новые коммиты каждого отправляемого ref, затем запускает полный
+`just check`. Уже опубликованная история не переписывается. Перед отправкой новой ветки выполните
+`git fetch origin`: remote-tracking refs определяют уже опубликованную историю. Если Git не может
+прочитать исходный commit, проверка завершается ошибкой, а не пропускает его. Для push по URL без
+configured remote проверяется вся достижимая история.
+
+Проверка формата не определяет семантическую корректность выбранного типа и не заменяет review.
+Как и другие локальные hooks, она требует установленного `core.hooksPath`; отключать её нельзя.
+
 Сначала читать [PRODUCT](../PRODUCT.md), [архитектуру](architecture.md), [ROADMAP](../ROADMAP.md)
 и применимый `.agents/skills/*/SKILL.md`. Имплементации сейчас нет; команды продукта из нового
 плана пока не существуют. Дизайн-контракт сохранён в [web/DESIGN.md](../web/DESIGN.md).

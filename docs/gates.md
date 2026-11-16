@@ -15,8 +15,12 @@
 - `security`: npm audit (low и выше), redacted Gitleaks.
 - `test`: настоящие behavioral regressions file-limit и source-admission на временных Git repo.
 
-Pre-commit запускает `just lint`, pre-push очищает exported Git environment и запускает
-полный `just check`. `scripts/setup` включает tracked hooks и ставит pinned dependencies.
+Pre-commit запускает `just lint`; commit-msg требует Conventional Commits.
+Pre-push очищает exported Git environment, проверяет сообщения всех новых отправляемых коммитов
+по каждому ref и запускает полный `just check`. Существующая опубликованная история исключается
+по remote-tracking refs и прежним remote OID; перед новой веткой требуется fetch.
+`scripts/setup` включает tracked hooks и ставит pinned dependencies.
+Допустимые типы и примеры — в [разработке](development.md#conventional-commits).
 Изменение политик не заменяет исправление обнаруженного дефекта.
 
 ## Вместе с первой реализацией

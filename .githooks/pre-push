@@ -4,4 +4,5 @@ set -euo pipefail
 for var in $(git rev-parse --local-env-vars); do
     unset "${var}"
 done
+mise exec -- node scripts/check-commits.mjs --push "$1"
 exec mise exec -- just check
