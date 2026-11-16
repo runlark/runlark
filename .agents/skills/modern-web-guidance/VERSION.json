@@ -1,0 +1,6 @@
+{
+  "source": "https://github.com/GoogleChrome/modern-web-guidance/tree/4dd968349e54ca45a05dd5c818fb035c9054b022/skills/modern-web-guidance",
+  "version": "1.0.0",
+  "commit": "4dd968349e54ca45a05dd5c818fb035c9054b022",
+  "local_changes": "SKILL.md: a change notice after the frontmatter, Oxfmt and markdownlint fixes only (blank lines around lists, dash bullets, a double-backtick code span); LICENSE verbatim"
+}

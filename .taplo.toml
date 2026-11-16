@@ -1,0 +1,4 @@
+exclude = ["target/**", "**/node_modules/**", ".local/**"]
+
+[formatting]
+column_width = 100

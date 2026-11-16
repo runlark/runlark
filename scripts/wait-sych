@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Adapted from bondiano/sych/scripts/wait-sych; advisory review availability, not approval.
+set -euo pipefail
+if (($# > 1)) || [[ "${1:-1}" == *[!0-9]* ]]; then
+    echo "usage: scripts/wait-sych [PR_NUMBER]" >&2
+    exit 2
+fi
+seconds="${SYCH_WAIT_SECONDS:-1800}"
+if [[ ! "${seconds}" =~ ^[0-9]{1,5}$ ]]; then
+    echo "SYCH_WAIT_SECONDS must be an integer from 0 to 99999" >&2
+    exit 2
+fi
+bot="${SYCH_BOT_LOGIN:-runlark-sych-reviewer[bot]}"
+deadline=$((SECONDS + 10#${seconds}))
+pr="$(gh pr view ${1:+"$1"} --json number --jq .number)"
+repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+head=""
+while ((SECONDS < deadline)); do
+    head="$(gh pr view "${pr}" --json headRefOid --jq .headRefOid)"
+    if [[ "${head}" != "${seen:-}" ]]; then
+        echo "wait-sych: waiting for ${head:0:12} on PR #${pr}" >&2
+        seen="${head}"
+    fi
+    summary="$(gh api --paginate "repos/${repo}/issues/${pr}/comments" | jq -r --arg bot "${bot}" --arg head "head \`${head:0:12}\`" \
+        '.[] | select(.user.login == $bot) | select(.body | startswith("<!-- sych:summary:") and test($head; "i")) | .body')"
+    current_head="$(gh pr view "${pr}" --json headRefOid --jq .headRefOid)"
+    if [[ -n "${summary}" && "${current_head}" == "${head}" ]]; then
+        printf '%s\n' "${summary}"
+        gh api --paginate "repos/${repo}/pulls/${pr}/comments" | jq -r --arg bot "${bot}" --arg head "${head}" \
+            '.[] | select(.user.login == $bot and .commit_id == $head) | "\n--- \(.path):\(.line // .original_line)\n\(.body)"'
+        exit 0
+    fi
+    sleep 20
+done
+echo "wait-sych: no current-head Sych review on PR #${pr} within ${seconds}s (last head: ${head})" >&2
+exit 1

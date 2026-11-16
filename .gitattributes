@@ -1,0 +1,19 @@
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.woff2 binary
+*.ico binary
+*.pdf binary
+*.ttf binary
+Cargo.lock linguist-generated=true
+package-lock.json linguist-generated=true
+*.cmd text eol=crlf
+.agents/skills/impeccable/** linguist-vendored=true
+.agents/skills/feod/** linguist-vendored=true
+.agents/skills/easement/** linguist-vendored=true
+.agents/skills/modern-web-guidance/** linguist-vendored=true
+.agents/skills/reatom/** linguist-vendored=true
+.agents/skills/reatom-async/** linguist-vendored=true
+.agents/skills/reatom-jsx/** linguist-vendored=true
+.agents/skills/reatom-review/** linguist-vendored=true
+.agents/skills/reatom-api-design/** linguist-vendored=true

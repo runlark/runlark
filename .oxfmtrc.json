@@ -1,0 +1,26 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 100,
+  "proseWrap": "preserve",
+  "sortPackageJson": false,
+  "ignorePatterns": [
+    "target/",
+    "node_modules/",
+    ".reports/",
+    ".local/",
+    ".omp/",
+    ".claude/",
+    "Cargo.lock",
+    ".agents/skills/impeccable/scripts/modern-screenshot.umd.js",
+    ".agents/skills/feod/scripts/",
+    "crates/runlark-worker/tests/histories/",
+    "crates/runlark-domain/tests/run_engine/corpus/",
+    "api/generated/",
+    "web/dist/",
+    "web/.generated/",
+    "web/.impeccable/hook.cache.json",
+    "**/DESIGN.md",
+    "CHANGELOG.md",
+    "PRODUCT.md"
+  ]
+}

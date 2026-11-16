@@ -1,0 +1,86 @@
+# Legacy → новый Runlark
+
+## Наблюдаемое состояние, 16 ноября 2026
+
+Локальное переключение выполнено. Legacy находится в `runlark-lagacy`; его HEAD
+`73e58d591c7aa6c6fa5ca2175669432c39be11c9`, ветка `test/expand-contract-worker-overlap`,
+refs и статус рабочей копии сохранены. Все 15 зарегистрированных worktrees проверены после repair.
+Новый независимый Git repo находится по прежнему пути `runlark`, ветка `codex/bootstrap`.
+
+Владелец выбрал отдельный репозиторий [runlark/runlark](https://github.com/runlark/runlark),
+GitHub ID **1459739203**. Новый `origin` направляется туда; исходный remote legacy
+`bondiano/runlark` не переименовывается и его URL не переиспользуется.
+По уточнению владельца новый репозиторий публичный; legacy остаётся приватным.
+Все CI jobs нового проекта используют GitHub-hosted `ubuntu-24.04`.
+Полный bootstrap публикуется веткой
+`codex/bootstrap` и PR к seed `main`; hosted CI/Sych проверяются на текущем head отдельно.
+Sych остаётся отдельным reviewer; возможный rollout его admission config требует отдельного запроса.
+
+Снимки локального переноса и прежний инфраструктурный proposal сохранены в ignored
+`.local/migration/`. Proposal был подготовлен для переиспользования `bondiano/runlark`:
+он больше не соответствует выбранному CI на GitHub-hosted runners.
+Он не применяется и не попадает в исходники Runlark.
+
+## Identity и сохранность
+
+Старый репозиторий: `bondiano/runlark`, GitHub ID **1437343687**.
+Локальное имя: **runlark-lagacy** — написание из запроса владельца сохранено.
+Локальный путь legacy: `/Users/bondiano/workspace/runlark-lagacy`.
+Новый репозиторий: отдельная Git history, public `runlark/runlark`, локально прежний путь Runlark.
+
+Старые branches, tags, PR, issues, releases, настройки, текущий checkout, ignored локальные данные
+и ADR сохраняются в legacy. После перемещения main checkout выполнить `git worktree repair`
+для сохранения зарегистрированных worktrees. Не reset/clean и не менять их branches.
+Legacy продуктовая модель, migrations и Temporal runtime не импортируются в новую историю.
+
+## До переключения
+
+- Сохранить IDs, refs, ruleset и local status; подготовить и проверить новый bootstrap.
+- Проверить пустой целевой `runlark/runlark` и отдельный scope infrastructure.
+- Использовать GitHub-hosted runners для нового repo; проверить Sych admission отдельно.
+- Production rollout для trusted Sych config требует отдельного запроса владельца.
+
+## Инфраструктура
+
+Legacy self-hosted runners остаются инфраструктурой старого проекта.
+Новый `https://github.com/runlark/runlark` использует стандартные GitHub-hosted `ubuntu-24.04`
+для CI и ожидания Sych. Новые ARC namespaces/pools, repository runner registration и доступ
+к private infrastructure не нужны. Имена обязательных jobs сохраняются: `check` и `sych`.
+
+Для нового проекта выбран отдельный приватный GitHub App организации `runlark`:
+`runlark-sych-reviewer`, App ID **5782357**, bot `runlark-sych-reviewer[bot]`.
+Trusted Sych connection `runlark` допускает только `runlark/runlark`, использует собственные
+PEM и webhook secret, endpoint `https://sych.bondiano.com/hooks/github/runlark`.
+Права: Actions, Checks, Contents, Issues, Metadata — read; Pull requests — read/write.
+App устанавливается только на этот repository; OAuth для review не требуется.
+Существующие connections и product writer scope legacy сохраняются; новый проект
+не наследует legacy API credentials. Admission применяется с текущими reviewer revision/image,
+без изменения моделей, бюджетов или policy.
+CI selectors неизменны: `.github/workflows/ci.yml`, job `check`, artifact `sych-reports`,
+`clippy.json`/`outcomes.json`, manifest `sych-ci.json`. Реальный bootstrap не публикует Clippy.
+
+Новая Sych App installation должна разрешать numeric repository identity **1459739203**.
+Публичный доступ к исходникам не заменяет App installation и server admission.
+Не deploy другой reviewer revision/image и не менять models/budgets/policy.
+
+## GitHub gates
+
+Обнаруженный legacy ruleset `main` (ID 27033371) требует PR, linear history и запрещает
+force push/deletion. В нём **нет** required status checks, вопреки старой documentation.
+Legacy ruleset сохраняется без изменения. Новый ruleset должен явно требовать
+current-branch `check` и `sych`, PR-only, linear history, no force push/deletion.
+
+Первый seed commit нового repo необходим до существования base branch. Полный bootstrap
+проходит отдельным PR; после seed защита включается до merge. Никакого force push истории.
+
+## Приёмка переключения
+
+- GitHub legacy имеет исходный numeric ID и остаётся private; новый Runlark — другой ID и public.
+- Legacy current HEAD/branch/status и все зарегистрированные worktrees сохранены.
+- Local remotes указывают на правильную identity; новый repo не наследует .git, .env или auth.
+- Новый `mise exec -- just check` проходит; hooks настроены.
+- Bootstrap PR проходит настоящий `check`, затем Sych current-head review.
+- Findings, UNKNOWN и gaps разобраны; hosted execution и Sych App/evidence подтверждены отдельно.
+- Codex sidebar показывает legacy по его новому пути и новый проект по прежнему.
+
+Пока пункты внешней приёмки не наблюдались, переключение не считается завершённым.

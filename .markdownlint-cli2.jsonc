@@ -1,0 +1,21 @@
+{
+  "globs": ["**/*.md", ".agents/**/*.md", ".github/**/*.md"],
+  "ignores": [
+    "**/node_modules/**",
+    "target/**",
+    "web/.generated/**",
+    ".local/**",
+    ".omp/**",
+    ".claude/**",
+    "CLAUDE.md",
+    // Public Sans license notice, kept verbatim from upstream.
+    "docs/brand/brandbook-source/fonts/PublicSans-Notice.md",
+  ],
+  "config": {
+    "default": true,
+    "MD013": false,
+    "MD024": { "siblings_only": true },
+    "MD025": false,
+    "MD041": false,
+  },
+}

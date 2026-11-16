@@ -1,0 +1,28 @@
+[files]
+# Hidden files are checked too, so internal/generated trees need explicit excludes.
+extend-exclude = [
+  "Cargo.lock",
+  "package-lock.json",
+  ".git",
+  ".agents/skills/impeccable/scripts/data",
+  ".agents/skills/impeccable/scripts/modern-screenshot.umd.js",
+  ".agents/skills/feod/scripts/feod.mjs",
+]
+ignore-hidden = false
+
+[default]
+extend-ignore-re = ['https?://[^\s<>)"]+']
+
+[default.extend-words]
+Sych = "Sych"
+Runlark = "Runlark"
+# Exact archive repository name requested by the owner: runlark-lagacy.
+lagacy = "lagacy"
+PN = "PN"
+UDID = "UDID"
+# localtunnel's public suffix (loca.lt), not a misspelling of "local".
+loca = "loca"
+
+[default.extend-identifiers]
+# Exact document name requested by the frontend owner; ordinary spelling stays checked.
+CODING_STANDART = "CODING_STANDART"

@@ -1,0 +1,13 @@
+/node_modules/
+/target/
+/.reports/
+/.local/
+/.omx/
+/.ruff_cache/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.DS_Store
+/.agents/skills/impeccable/scripts/bin/

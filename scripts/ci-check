@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Bind actual bootstrap gate evidence to the tested checkout, including merge checkouts.
+set -euo pipefail
+: "${GITHUB_REPOSITORY:?GitHub Actions repository is required}"
+: "${GITHUB_RUN_ID:?GitHub Actions run ID is required}"
+mkdir -p .reports
+rm -f .reports/outcomes.json .reports/sych-ci.json
+status=0
+just check || status=$?
+jq -n --argjson code "${status}" \
+    '{schema_version: 1, commands: [{name: "just check", exit_code: $code}]}' >.reports/outcomes.json
+oid="$(git rev-parse HEAD)"
+node_version="$(node --version)"
+target="$(uname -sm)"
+jq -n --arg job "github:${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+    --arg oid "${oid}" --arg toolchain "node ${node_version}" \
+    --arg target "${target}" \
+    '{schema_version: 1, job: $job, tested_oid: $oid, toolchain: $toolchain, target: $target, features: []}' >.reports/sych-ci.json
+exit "${status}"
