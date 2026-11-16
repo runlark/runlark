@@ -7,9 +7,19 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+const env = (cwd) => ({
+    ...process.env,
+    MISE_CONFIG_FILE: join(cwd, "empty-global.toml"),
+    MISE_TRUSTED_CONFIG_PATHS: cwd,
+});
 const git = (cwd, ...args) =>
-    execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-const run = (cwd, ...args) => spawnSync("git", args, { cwd, encoding: "utf8" });
+    execFileSync("git", args, {
+        cwd,
+        env: env(cwd),
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+const run = (cwd, ...args) => spawnSync("git", args, { cwd, env: env(cwd), encoding: "utf8" });
 const commit = (cwd, message) => git(cwd, "commit", "--quiet", "--allow-empty", "-m", message);
 
 const fixture = (t) => {
@@ -19,6 +29,7 @@ const fixture = (t) => {
 
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     mkdirSync(local);
+    writeFileSync(join(local, "empty-global.toml"), "");
     git(dir, "init", "--bare", "--quiet", remote);
     git(local, "init", "--quiet", "-b", "main");
     git(local, "config", "user.name", "Hook test");
@@ -32,6 +43,8 @@ const fixture = (t) => {
     const install = () => {
         mkdirSync(join(local, ".githooks"));
         mkdirSync(join(local, "scripts"));
+        // Hooks resolve pinned tools from this temporary project, without global defaults.
+        copyFileSync(join(root, "mise.toml"), join(local, "mise.toml"));
         copyFileSync(
             join(root, "scripts/check-commits.mjs"),
             join(local, "scripts/check-commits.mjs"),
