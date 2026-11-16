@@ -54,5 +54,8 @@ configured remote проверяется вся достижимая истор�
 DSH bridge/controller, Wasmtime/WIT или frontend implementation сверить официальные docs и
 конкретную версию. Не добавлять зависимости и абстракции для будущих, ещё не используемых компонентов.
 
-Репозиторий приватный. Не коммитить credentials, личные transcripts, production data или local
+Новый репозиторий публичный; все CI jobs, включая ожидание Sych, работают на стандартных
+GitHub-hosted `ubuntu-24.04`. Личные self-hosted runners и private infrastructure для CI не нужны.
+Лицензия проекта пока не выбрана; лицензии сторонних навыков сохраняются.
+Не коммитить credentials, личные transcripts, production data или local
 checkout paths. Не deploy production, не создавать платные ресурсы и не публиковать images без запроса.

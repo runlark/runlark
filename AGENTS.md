@@ -82,7 +82,11 @@ Initial empty-repository seed is the sole unavoidable main bootstrap; all substa
 - DSH, Wasmtime and external API claims require official, version-bound evidence before use.
 - Sych remains standalone. Do not open its DB, embed its engine, or change reviewer image/models/
   budgets/policy to make a review green. App keys and provider credentials stay outside Actions.
-- Keep both repositories private. No credentials, personal transcripts or production data in Git.
+- The new `runlark/runlark` repository is public; legacy remains private. All Actions jobs use
+  standard GitHub-hosted `ubuntu-24.04` runners, including the Sych waiter. Do not require the
+  owner's self-hosted runners or private infrastructure for CI. Keep read-only permissions,
+  SHA-pinned actions, current-head checks and the shared local/CI gate.
+  No credentials, personal transcripts or production data in Git.
   No production deployment, paid resource creation or image publication without a request.
 - Bootstrap migration preserves old refs, worktrees, ignored data and settings; follow
   [migration](docs/migration.md) and verify both external repository identities.

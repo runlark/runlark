@@ -8,7 +8,8 @@
 - [x] Локальный legacy переименован, его refs/HEAD/status сохранены, все 15 worktrees восстановлены.
 - [x] Владелец выбрал отдельную remote identity `runlark/runlark`; legacy URL не переиспользуется.
 - [ ] GitHub publication и проверка сохранённой legacy identity.
-- [ ] Отдельные runners, Sych admission и required current-head `check`/`sych` для нового repo.
+- [x] Все CI jobs используют стандартные GitHub-hosted `ubuntu-24.04`, без личных runners.
+- [ ] Sych admission и required current-head `check`/`sych` для нового public repo.
 - [ ] Реальные CI и Sych bootstrap PR; findings/UNKNOWN/gaps разобраны.
 
 ## A0 — управляемая DSH-сессия и локальный durable run

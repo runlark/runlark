@@ -15,7 +15,7 @@ concurrency:
 jobs:
   sych:
     name: sych
-    runs-on: runlark-review
+    runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
       # Separate workflow: CI must finish before the external reviewer receives its evidence.

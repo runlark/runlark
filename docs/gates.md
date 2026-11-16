@@ -43,7 +43,8 @@ Cargo workspace не выдаётся за Rust validation. Legacy API, Temporal
 
 ## GitHub и Sych
 
-`CI / check` использует отдельный `runlark-ci`; `Sych / sych` — `runlark-review`.
+`CI / check` и `Sych / sych` работают на стандартных GitHub-hosted `ubuntu-24.04`.
+Новый `runlark/runlark` публичный; CI не требует личных self-hosted runners или ARC registration.
 Actions pinned по SHA; read-only permissions; checkout не сохраняет credentials;
 `pull_request_target` не используется. CI и ожидание Sych — отдельные workflows.
 
@@ -60,5 +61,5 @@ Actions pinned по SHA; read-only permissions; checkout не сохраняет
 все findings, UNKNOWN и coverage gaps. Наличие summary не означает approval.
 Нельзя менять reviewer image/models/budgets ради зелёного результата.
 
-Файлы workflow не доказывают external admission. Реальные проверки App installation, server
-allowlist, repository-scoped runners и GitHub ruleset перечислены в [migration](migration.md).
+Файлы workflow не доказывают Sych admission. Реальные проверки App installation, server
+allowlist, hosted execution и GitHub ruleset перечислены в [migration](migration.md).

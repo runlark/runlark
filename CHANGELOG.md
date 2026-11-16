@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Новый репозиторий публичный; CI и ожидание Sych перенесены на GitHub-hosted `ubuntu-24.04`.
 - Conventional Commits обязательны: commit-msg проверяет сообщение, pre-push проверяет все новые коммиты перед полным `just check`.
 - Целевой GitHub-репозиторий нового проекта: `runlark/runlark`, отдельно от legacy `bondiano/runlark`.
 - Новый local-first Runlark: DSH UI/runtime + Rust CLI/daemon + SQLite + WASM; optional collaboration.
