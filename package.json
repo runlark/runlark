@@ -11,7 +11,7 @@
     "audit": "npm audit --audit-level=low"
   },
   "devDependencies": {
-    "markdownlint-cli2": "0.24.0",
+    "markdownlint-cli2": "0.24.1",
     "oxfmt": "0.77.0"
   },
   "overrides": {
