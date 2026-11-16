@@ -1,5 +1,20 @@
 # Legacy → новый Runlark
 
+## Наблюдаемое состояние, 16 ноября 2026
+
+Локальное переключение выполнено. Legacy находится в `runlark-lagacy`; его HEAD
+`73e58d591c7aa6c6fa5ca2175669432c39be11c9`, ветка `test/expand-contract-worker-overlap`,
+refs и статус рабочей копии сохранены. Все 15 зарегистрированных worktrees проверены после repair.
+Новый независимый Git repo находится по прежнему пути `runlark`, ветка `codex/bootstrap`.
+
+GitHub остаётся на исходной identity `bondiano/runlark`; новый remote не задан, чтобы случайно
+не отправить новую историю в legacy. Переименование на GitHub, новый private repo, hosted CI/Sych
+и инфраструктурное переключение ещё не выполнялись. Сначала требуется отдельная авторизация
+production rollout Sych и регистрации runners. Правило проекта запрещает production deploy без запроса.
+
+Проверенный инфраструктурный patch и снимки локального переноса сохранены в ignored
+`.local/migration/`. Patch готовится для отдельного petinfra PR, не попадает в исходники Runlark.
+
 ## Identity и сохранность
 
 Старый репозиторий: `bondiano/runlark`, GitHub ID **1437343687**.
