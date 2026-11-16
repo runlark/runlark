@@ -10,7 +10,7 @@ if [[ ! "${seconds}" =~ ^[0-9]{1,5}$ ]]; then
     echo "SYCH_WAIT_SECONDS must be an integer from 0 to 99999" >&2
     exit 2
 fi
-bot="${SYCH_BOT_LOGIN:-sych-reviewer[bot]}"
+bot="${SYCH_BOT_LOGIN:-runlark-sych-reviewer[bot]}"
 deadline=$((SECONDS + 10#${seconds}))
 pr="$(gh pr view ${1:+"$1"} --json number --jq .number)"
 repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"

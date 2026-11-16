@@ -59,6 +59,8 @@ Actions pinned по SHA; read-only permissions; checkout не сохраняет
 `main` требует PR, актуальную ветку, `check` и `sych`; force push и deletion запрещены.
 После каждого push — дождаться CI и `scripts/wait-sych` на точном current head, прочитать
 все findings, UNKNOWN и coverage gaps. Наличие summary не означает approval.
+Ожидаемый автор summary — `runlark-sych-reviewer[bot]`, отдельный приватный GitHub App
+организации `runlark`. Чужой bot или summary старого head не принимается.
 Нельзя менять reviewer image/models/budgets ради зелёного результата.
 
 Файлы workflow не доказывают Sych admission. Реальные проверки App installation, server

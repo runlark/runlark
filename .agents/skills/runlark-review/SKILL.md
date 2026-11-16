@@ -7,7 +7,7 @@ description: Use for Runlark CI, pull requests, Sych findings, dependency/toolin
 
 1. Run `mise exec -- just check` and exercise the actual changed runtime path before pushing. Keep check commands in the justfile; do not establish a second CI-only gate.
 2. Use a branch and PR to main. After every push run `scripts/wait-sych [PR_NUMBER]` and inspect both **CI / check** and **Sych / sych**.
-3. Confirm the summary is from `sych-reviewer[bot]` and names the current head. Old-head evidence is stale, even if it was green. The waiter re-reads head but its success is only review availability.
+3. Confirm the summary is from `runlark-sych-reviewer[bot]` and names the current head. Old-head evidence is stale, even if it was green. The waiter re-reads head but its success is only review availability.
 4. Read every finding, UNKNOWN and coverage gap. Fix real defects and wait again on the new head. Explain false positives with evidence; do not distort code to satisfy noise. A waiver/risk decision is not proof of safety.
 5. Report concrete verification, accepted risks and missing evidence. Never merge with missing current-head review or failing checks.
 

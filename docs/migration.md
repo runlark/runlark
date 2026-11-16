@@ -47,14 +47,20 @@ Legacy self-hosted runners остаются инфраструктурой ст�
 для CI и ожидания Sych. Новые ARC namespaces/pools, repository runner registration и доступ
 к private infrastructure не нужны. Имена обязательных jobs сохраняются: `check` и `sych`.
 
-Trusted Sych `scm.github[id=sych].repositories` должен содержать **оба** full names.
-Существующий product writer client должен оставаться scoped к legacy; новая разработка
-использует GitHub App review, а не автоматически наследует legacy API credentials.
+Для нового проекта выбран отдельный приватный GitHub App организации `runlark`:
+`runlark-sych-reviewer`, App ID **5782357**, bot `runlark-sych-reviewer[bot]`.
+Trusted Sych connection `runlark` допускает только `runlark/runlark`, использует собственные
+PEM и webhook secret, endpoint `https://sych.bondiano.com/hooks/github/runlark`.
+Права: Actions, Checks, Contents, Issues, Metadata — read; Pull requests — read/write.
+App устанавливается только на этот repository; OAuth для review не требуется.
+Существующие connections и product writer scope legacy сохраняются; новый проект
+не наследует legacy API credentials. Admission применяется с текущими reviewer revision/image,
+без изменения моделей, бюджетов или policy.
 CI selectors неизменны: `.github/workflows/ci.yml`, job `check`, artifact `sych-reports`,
 `clippy.json`/`outcomes.json`, manifest `sych-ci.json`. Реальный bootstrap не публикует Clippy.
 
-Sych App installation должна разрешать обе numeric repository identities.
-Автоматическое включение нового repository нельзя предполагать, даже при публичном доступе к исходникам.
+Новая Sych App installation должна разрешать numeric repository identity **1459739203**.
+Публичный доступ к исходникам не заменяет App installation и server admission.
 Не deploy другой reviewer revision/image и не менять models/budgets/policy.
 
 ## GitHub gates

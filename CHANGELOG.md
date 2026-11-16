@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Для организации runlark настроен отдельный приватный Sych App; current-head waiter ожидает `runlark-sych-reviewer[bot]`.
 - Новый репозиторий публичный; CI и ожидание Sych перенесены на GitHub-hosted `ubuntu-24.04`.
 - Git hook tests используют project-local mise pins и пустой global config на чистых hosted runners.
 - Conventional Commits обязательны: commit-msg проверяет сообщение, pre-push проверяет все новые коммиты перед полным `just check`.
