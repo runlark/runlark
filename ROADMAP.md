@@ -7,10 +7,10 @@
 - [x] Bootstrap запрещает продуктовые исходники без их compiler/architecture/test/smoke gates.
 - [x] Локальный legacy переименован, его refs/HEAD/status сохранены, все 15 worktrees восстановлены.
 - [x] Владелец выбрал отдельную remote identity `runlark/runlark`; legacy URL не переиспользуется.
-- [ ] GitHub publication и проверка сохранённой legacy identity.
+- [x] GitHub publication и проверка сохранённой legacy identity.
 - [x] Все CI jobs используют стандартные GitHub-hosted `ubuntu-24.04`, без личных runners.
-- [ ] Sych admission и required current-head `check`/`sych` для нового public repo.
-- [ ] Реальные CI и Sych bootstrap PR; findings/UNKNOWN/gaps разобраны.
+- [x] Sych admission и required current-head `check`/`sych` для нового public repo.
+- [x] Реальные CI и Sych bootstrap PR; findings/UNKNOWN/gaps разобраны.
 
 ## A0 — управляемая DSH-сессия и локальный durable run
 
