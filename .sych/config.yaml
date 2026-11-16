@@ -1,0 +1,13 @@
+# Trusted target-branch policy; a PR cannot relax its own review requirements.
+schema_version: 1
+review:
+  language: ru
+ci:
+  wait_seconds: 1200
+  expected_reports:
+    - id: clippy
+      applies_to: ["crates/**", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml"]
+      format: cargo_json
+    - id: check
+      applies_to: ["**"]
+      format: sych_manifest
