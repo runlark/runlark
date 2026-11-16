@@ -6,7 +6,8 @@
 - [x] Переносимые development/review skills, pinned tooling, hooks, file-size/security/static gates.
 - [x] Bootstrap запрещает продуктовые исходники без их compiler/architecture/test/smoke gates.
 - [x] Локальный legacy переименован, его refs/HEAD/status сохранены, все 15 worktrees восстановлены.
-- [ ] GitHub cutover и проверка сохранённой legacy identity.
+- [x] Владелец выбрал отдельную remote identity `runlark/runlark`; legacy URL не переиспользуется.
+- [ ] GitHub publication и проверка сохранённой legacy identity.
 - [ ] Отдельные runners, Sych admission и required current-head `check`/`sych` для нового repo.
 - [ ] Реальные CI и Sych bootstrap PR; findings/UNKNOWN/gaps разобраны.
 
