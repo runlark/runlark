@@ -122,39 +122,7 @@ impl Scheduler {
         loop {
             let candidate = {
                 let conn = open_sqlite(&self.state.db_path)?;
-                let executing = RunQueries::list_executing_runs(&conn)?;
-                let used = u64::try_from(executing.len()).unwrap_or(u64::MAX);
-                if used >= self.max_slots {
-                    break;
-                }
-
-                let queued = BoardProjection::list_queued_runs_fifo(&conn)?;
-                let mut chosen: Option<(Run, PathBuf)> = None;
-                for run in queued {
-                    if skipped.contains(&run.id) {
-                        continue;
-                    }
-                    if let Some(pid) = &run.project_id
-                        && let Some(project) = ProjectStore::get_project(&conn, pid)?
-                    {
-                        let project_limit =
-                            u64::from(project.max_concurrent_runs).min(self.max_slots);
-                        let project_active = executing
-                            .iter()
-                            .filter(|r| r.project_id.as_ref() == Some(pid))
-                            .count();
-                        if u64::try_from(project_active).unwrap_or(u64::MAX) >= project_limit {
-                            continue;
-                        }
-                        chosen = Some((run, PathBuf::from(project.repo_root)));
-                        break;
-                    }
-                    let workspace = SessionStore::get_session(&conn, &run.session_id)?
-                        .map_or_else(|| PathBuf::from("."), |s| PathBuf::from(s.cwd));
-                    chosen = Some((run, workspace));
-                    break;
-                }
-                chosen
+                self.select_admittable_candidate(&conn, &skipped)?
             };
 
             let Some((run, workspace)) = candidate else {
@@ -199,6 +167,47 @@ impl Scheduler {
         }
 
         Ok(admitted)
+    }
+
+    fn select_admittable_candidate(
+        &self,
+        conn: &runlark_local::Connection,
+        skipped: &std::collections::HashSet<runlark_domain::RunId>,
+    ) -> Result<Option<(Run, PathBuf)>, StorageError> {
+        let executing = RunQueries::list_executing_runs(conn)?;
+        let used = u64::try_from(executing.len()).unwrap_or(u64::MAX);
+        if used >= self.max_slots {
+            return Ok(None);
+        }
+
+        for run in BoardProjection::list_queued_runs_fifo(conn)? {
+            if skipped.contains(&run.id) {
+                continue;
+            }
+            if let Some(pid) = &run.project_id {
+                let Some(project) = ProjectStore::get_project(conn, pid)? else {
+                    tracing::warn!(
+                        run_id = %run.id,
+                        project_id = %pid,
+                        "Skipping queued run whose project does not exist"
+                    );
+                    continue;
+                };
+                let project_limit = u64::from(project.max_concurrent_runs).min(self.max_slots);
+                let project_active = executing
+                    .iter()
+                    .filter(|r| r.project_id.as_ref() == Some(pid))
+                    .count();
+                if u64::try_from(project_active).unwrap_or(u64::MAX) >= project_limit {
+                    continue;
+                }
+                return Ok(Some((run, PathBuf::from(project.repo_root))));
+            }
+            let workspace = SessionStore::get_session(conn, &run.session_id)?
+                .map_or_else(|| PathBuf::from("."), |s| PathBuf::from(s.cwd));
+            return Ok(Some((run, workspace)));
+        }
+        Ok(None)
     }
 }
 
@@ -325,5 +334,93 @@ mod tests {
 
         assert_eq!(admitted.len(), 1);
         assert_eq!(admitted[0].id.0, "run_u_2");
+    }
+
+    #[tokio::test]
+    async fn admit_once_skips_queued_run_with_missing_project_record() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("mkdir");
+        for args in [
+            vec!["init"],
+            vec!["config", "user.email", "t@runlark.dev"],
+            vec!["config", "user.name", "Test"],
+        ] {
+            assert!(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&repo)
+                    .args(&args)
+                    .output()
+                    .expect("git")
+                    .status
+                    .success()
+            );
+        }
+        std::fs::write(repo.join("README.md"), "# R\n").expect("write");
+        for args in [vec!["add", "README.md"], vec!["commit", "-m", "init"]] {
+            assert!(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&repo)
+                    .args(&args)
+                    .output()
+                    .expect("git")
+                    .status
+                    .success()
+            );
+        }
+
+        let db_path = temp.path().join("sched_missing_proj.db");
+        let conn = open_sqlite(&db_path).expect("open");
+        initialize_schema(&conn).expect("schema");
+        let repo_str = repo.to_string_lossy().into_owned();
+        for (n, proj) in [(1, Some("proj_deleted")), (2, None)] {
+            let sid = SessionId::from(format!("sess_mp_{n}"));
+            let rid = RunId::from(format!("run_mp_{n}"));
+            SessionStore::create_session(
+                &conn,
+                &Session {
+                    id: sid.clone(),
+                    task_id: TaskId::from(format!("task_mp_{n}")),
+                    cwd: repo_str.clone(),
+                    status: SessionStatus::Active,
+                    current_revision: Revision(1),
+                    active_run_id: Some(rid.clone()),
+                    created_at: Timestamp(n * 10),
+                    updated_at: Timestamp(n * 10),
+                },
+            )
+            .expect("session");
+            let run = Run {
+                id: rid,
+                session_id: sid,
+                status: RunStatus::Queued,
+                worktree_path: String::new(),
+                revision: Revision(1),
+                created_at: Timestamp(n * 10),
+                updated_at: Timestamp(n * 10),
+                task_id: None,
+                project_id: proj.map(runlark_domain::ProjectId::from),
+                workflow_stage: WorkflowStage::default(),
+                task_kind: TaskKind::default(),
+                workflow_digest: None,
+                base_sha: None,
+                head_sha: None,
+                plan_version: 1,
+                policy_digest: None,
+                budget_policy: BudgetPolicy::default(),
+                cost_summary: CostSummary::default(),
+                repair_attempts: 0,
+                pr_url: None,
+            };
+            SessionStore::save_run(&conn, &run).expect("run");
+        }
+        drop(conn);
+
+        let scheduler = Scheduler::new(AppState::new(db_path));
+        let admitted = scheduler.admit_once().await.expect("admit_once");
+        assert_eq!(admitted.len(), 1);
+        assert_eq!(admitted[0].id.0, "run_mp_2");
     }
 }
