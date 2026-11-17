@@ -67,10 +67,10 @@ impl SessionStore {
                 session.task_id.as_ref(),
                 session.cwd,
                 Self::session_status_to_str(session.status),
-                to_sql_i64(session.current_revision.0),
+                to_sql_i64(session.current_revision.0)?,
                 session.active_run_id.as_ref().map(AsRef::as_ref),
-                to_sql_i64(session.created_at.0),
-                to_sql_i64(session.updated_at.0),
+                to_sql_i64(session.created_at.0)?,
+                to_sql_i64(session.updated_at.0)?,
             ],
         )?;
         Ok(())
@@ -90,9 +90,9 @@ impl SessionStore {
                 session.id.as_ref(),
                 session.cwd,
                 Self::session_status_to_str(session.status),
-                to_sql_i64(session.current_revision.0),
+                to_sql_i64(session.current_revision.0)?,
                 session.active_run_id.as_ref().map(AsRef::as_ref),
-                to_sql_i64(session.updated_at.0),
+                to_sql_i64(session.updated_at.0)?,
             ],
         )?;
         Ok(())
@@ -117,10 +117,10 @@ impl SessionStore {
                 let t_id: String = row.get(1)?;
                 let cwd: String = row.get(2)?;
                 let status_str: String = row.get(3)?;
-                let rev = from_sql_i64(row.get::<_, i64>(4)?);
+                let rev = from_sql_i64(row.get::<_, i64>(4)?, 4)?;
                 let active_r: Option<String> = row.get(5)?;
-                let created = from_sql_i64(row.get::<_, i64>(6)?);
-                let updated = from_sql_i64(row.get::<_, i64>(7)?);
+                let created = from_sql_i64(row.get::<_, i64>(6)?, 6)?;
+                let updated = from_sql_i64(row.get::<_, i64>(7)?, 7)?;
 
                 Ok(Session {
                     id: SessionId::from(s_id),
@@ -152,10 +152,10 @@ impl SessionStore {
             let t_id: String = row.get(1)?;
             let cwd: String = row.get(2)?;
             let status_str: String = row.get(3)?;
-            let rev = from_sql_i64(row.get::<_, i64>(4)?);
+            let rev = from_sql_i64(row.get::<_, i64>(4)?, 4)?;
             let active_r: Option<String> = row.get(5)?;
-            let created = from_sql_i64(row.get::<_, i64>(6)?);
-            let updated = from_sql_i64(row.get::<_, i64>(7)?);
+            let created = from_sql_i64(row.get::<_, i64>(6)?, 6)?;
+            let updated = from_sql_i64(row.get::<_, i64>(7)?, 7)?;
 
             Ok(Session {
                 id: SessionId::from(s_id),
@@ -191,9 +191,9 @@ impl SessionStore {
                 run.session_id.as_ref(),
                 Self::run_status_to_str(run.status),
                 run.worktree_path,
-                to_sql_i64(run.revision.0),
-                to_sql_i64(run.created_at.0),
-                to_sql_i64(run.updated_at.0),
+                to_sql_i64(run.revision.0)?,
+                to_sql_i64(run.created_at.0)?,
+                to_sql_i64(run.updated_at.0)?,
             ],
         )?;
         Ok(())
@@ -215,9 +215,9 @@ impl SessionStore {
                 let s_id: String = row.get(1)?;
                 let status_str: String = row.get(2)?;
                 let wt: String = row.get(3)?;
-                let rev = from_sql_i64(row.get::<_, i64>(4)?);
-                let created = from_sql_i64(row.get::<_, i64>(5)?);
-                let updated = from_sql_i64(row.get::<_, i64>(6)?);
+                let rev = from_sql_i64(row.get::<_, i64>(4)?, 4)?;
+                let created = from_sql_i64(row.get::<_, i64>(5)?, 5)?;
+                let updated = from_sql_i64(row.get::<_, i64>(6)?, 6)?;
 
                 Ok(Run {
                     id: RunId::from(r_id),

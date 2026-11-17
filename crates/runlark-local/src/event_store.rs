@@ -35,10 +35,10 @@ impl EventStore {
             ),
             params![
                 run_id.as_ref(),
-                to_sql_i64(seq.0),
+                to_sql_i64(seq.0)?,
                 event_type,
                 payload,
-                to_sql_i64(now.0)
+                to_sql_i64(now.0)?
             ],
         )?;
         Ok(())
@@ -54,7 +54,10 @@ impl EventStore {
         run_id: &RunId,
         after_seq: Option<EventSeq>,
     ) -> Result<Vec<StoredEvent>, StorageError> {
-        let min_seq = after_seq.map_or(-1, |s| to_sql_i64(s.0));
+        let min_seq = match after_seq {
+            Some(s) => to_sql_i64(s.0)?,
+            None => -1,
+        };
         let mut stmt = conn.prepare(concat!(
             "SELECT run_id, seq, event_type, payload, created_at ",
             "FROM events ",
@@ -64,10 +67,10 @@ impl EventStore {
 
         let rows = stmt.query_map(params![run_id.as_ref(), min_seq], |row| {
             let r_id: String = row.get(0)?;
-            let seq = from_sql_i64(row.get::<_, i64>(1)?);
+            let seq = from_sql_i64(row.get::<_, i64>(1)?, 1)?;
             let event_type: String = row.get(2)?;
             let payload: String = row.get(3)?;
-            let created_at = from_sql_i64(row.get::<_, i64>(4)?);
+            let created_at = from_sql_i64(row.get::<_, i64>(4)?, 4)?;
 
             Ok(StoredEvent {
                 run_id: RunId::from(r_id),

@@ -76,7 +76,7 @@ impl ReconciliationEngine {
                 "UPDATE runs SET status = 'interrupted', updated_at = ?2 ",
                 "WHERE run_id = ?1 AND status IN ('running', 'cancel_requested', 'queued')"
             ),
-            params![run_id.as_ref(), to_sql_i64(now.0)],
+            params![run_id.as_ref(), to_sql_i64(now.0)?],
         )?;
         Ok(())
     }

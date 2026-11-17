@@ -2,14 +2,22 @@ use crate::error::StorageError;
 use rusqlite::Connection;
 use std::path::Path;
 
-#[must_use]
-pub fn to_sql_i64(val: u64) -> i64 {
-    i64::try_from(val).unwrap_or(i64::MAX)
+/// Converts an unsigned integer to `SQLite` `i64`, rejecting values above `i64::MAX`.
+///
+/// # Errors
+/// Returns `StorageError::InvalidState` if `val` exceeds `i64::MAX`.
+pub fn to_sql_i64(val: u64) -> Result<i64, StorageError> {
+    i64::try_from(val).map_err(|_| {
+        StorageError::InvalidState(format!("integer value {val} exceeds SQLite i64 range"))
+    })
 }
 
-#[must_use]
-pub fn from_sql_i64(val: i64) -> u64 {
-    u64::try_from(val).unwrap_or_default()
+/// Converts a non-negative `SQLite` `i64` column value back to `u64`.
+///
+/// # Errors
+/// Returns `rusqlite::Error::IntegralValueOutOfRange` if `val` is negative.
+pub fn from_sql_i64(val: i64, column: usize) -> rusqlite::Result<u64> {
+    u64::try_from(val).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(column, val))
 }
 
 /// Configures standard pragmas on a `SQLite` connection for durable concurrency.

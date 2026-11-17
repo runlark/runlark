@@ -232,11 +232,11 @@ fn test_resume_session_recovers_interrupted_run() {
         other => panic!("expected SessionResumed, got {other:?}"),
     }
 
-    // Resuming without an active run must not emit SessionResumed for a non-existent run
-    let no_run_outcome =
-        transition(&session, None, &cmd, Timestamp(2100)).expect("resume without run succeeds");
-    assert!(no_run_outcome.new_run.is_none());
-    assert!(no_run_outcome.events.is_empty());
+    // Resuming without an active run must fail with NoActiveRun rather than mutating revision silently
+    assert_eq!(
+        transition(&session, None, &cmd, Timestamp(2100)).unwrap_err(),
+        TransitionError::NoActiveRun
+    );
 }
 
 #[test]
@@ -307,6 +307,28 @@ fn test_session_mismatch_and_terminal_run_guards() {
             &session,
             Some(&running_run),
             &mismatched_run_cmd,
+            Timestamp(2000)
+        )
+        .unwrap_err(),
+        TransitionError::ActiveRunMismatch {
+            active: RunId::from("run_active"),
+            requested: RunId::from("run_other"),
+        }
+    );
+
+    let mismatched_stop_cmd = SessionCommand::StopRun(StopRunCommand {
+        command_id: CommandId::from("cmd_stop_wrong"),
+        session_id: session.id.clone(),
+        run_id: RunId::from("run_other"),
+        reason: Some("wrong run".to_string()),
+        expected_revision: Revision(1),
+        created_at: Timestamp(2000),
+    });
+    assert_eq!(
+        transition(
+            &session,
+            Some(&running_run),
+            &mismatched_stop_cmd,
             Timestamp(2000)
         )
         .unwrap_err(),

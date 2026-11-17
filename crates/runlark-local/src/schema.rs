@@ -3,7 +3,7 @@ use rusqlite::Connection;
 
 const INITIAL_SCHEMA: &str = include_str!("../migrations/0001_initial.sql");
 
-/// Initializes the database schema, applying pending migrations.
+/// Initializes the `SQLite` database with the idempotent initial schema (`0001_initial.sql`).
 ///
 /// # Errors
 /// Returns `StorageError` if DDL execution fails.

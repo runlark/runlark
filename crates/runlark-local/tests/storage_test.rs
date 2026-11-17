@@ -105,6 +105,20 @@ fn test_persist_intent_idempotency_and_conflict() {
         CommandStore::mark_failed(&conn, &missing_id, "err", Timestamp(1200)),
         Err(StorageError::InvalidState(_))
     ));
+
+    // 6. Values exceeding SQLite i64::MAX are rejected instead of silently clamped
+    let overflow_cmd = SessionCommand::SendPrompt(SendPromptCommand {
+        command_id: CommandId::from("cmd_overflow"),
+        session_id: session.id,
+        run_id: run.id,
+        prompt: "Overflow rev".to_string(),
+        expected_revision: Revision(u64::MAX),
+        created_at: Timestamp(1250),
+    });
+    assert!(matches!(
+        CommandStore::persist_intent(&mut conn, &overflow_cmd, Timestamp(1250)),
+        Err(StorageError::InvalidState(_))
+    ));
 }
 
 #[test]

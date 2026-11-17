@@ -96,8 +96,8 @@ impl CommandStore {
                 command_type,
                 payload_json,
                 payload_hash,
-                to_sql_i64(command.expected_revision().0),
-                to_sql_i64(now.0),
+                to_sql_i64(command.expected_revision().0)?,
+                to_sql_i64(now.0)?,
             ],
         )?;
 
@@ -126,7 +126,7 @@ impl CommandStore {
     ) -> Result<(), StorageError> {
         let affected = conn.execute(
             "UPDATE commands SET status = 'dispatched', dispatch_attempts = dispatch_attempts + 1, updated_at = ?2 WHERE command_id = ?1",
-            params![command_id.as_ref(), to_sql_i64(now.0)],
+            params![command_id.as_ref(), to_sql_i64(now.0)?],
         )?;
         Self::ensure_updated(affected, command_id)
     }
@@ -143,7 +143,7 @@ impl CommandStore {
     ) -> Result<(), StorageError> {
         let affected = conn.execute(
             "UPDATE commands SET status = 'acked', updated_at = ?2 WHERE command_id = ?1",
-            params![command_id.as_ref(), to_sql_i64(now.0)],
+            params![command_id.as_ref(), to_sql_i64(now.0)?],
         )?;
         Self::ensure_updated(affected, command_id)
     }
@@ -161,7 +161,7 @@ impl CommandStore {
     ) -> Result<(), StorageError> {
         let affected = conn.execute(
             "UPDATE commands SET status = 'failed', error_message = ?2, updated_at = ?3 WHERE command_id = ?1",
-            params![command_id.as_ref(), error, to_sql_i64(now.0)],
+            params![command_id.as_ref(), error, to_sql_i64(now.0)?],
         )?;
         Self::ensure_updated(affected, command_id)
     }
@@ -189,12 +189,12 @@ impl CommandStore {
                     command_type: row.get(3)?,
                     payload: row.get(4)?,
                     payload_hash: row.get(5)?,
-                    expected_revision: Revision(from_sql_i64(row.get::<_, i64>(6)?)),
+                    expected_revision: Revision(from_sql_i64(row.get::<_, i64>(6)?, 6)?),
                     status: row.get(7)?,
                     dispatch_attempts: row.get(8)?,
                     error_message: row.get(9)?,
-                    created_at: Timestamp(from_sql_i64(row.get::<_, i64>(10)?)),
-                    updated_at: Timestamp(from_sql_i64(row.get::<_, i64>(11)?)),
+                    created_at: Timestamp(from_sql_i64(row.get::<_, i64>(10)?, 10)?),
+                    updated_at: Timestamp(from_sql_i64(row.get::<_, i64>(11)?, 11)?),
                 })
             },
         )
