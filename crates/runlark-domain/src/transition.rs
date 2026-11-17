@@ -88,6 +88,7 @@ fn handle_stop_run(
         events: vec![DomainEvent::RunCancelRequested {
             run_id: cmd.run_id.clone(),
             command_id: cmd.command_id.clone(),
+            reason: cmd.reason.clone(),
             timestamp: now,
         }],
     })
@@ -124,6 +125,16 @@ fn handle_resume_session(
     }
 }
 
+fn is_run_blocking_session_mutation(status: RunStatus) -> bool {
+    matches!(
+        status,
+        RunStatus::Queued
+            | RunStatus::Running
+            | RunStatus::WaitingForApproval
+            | RunStatus::CancelRequested
+    )
+}
+
 fn handle_change_cwd(
     session: &Session,
     active_run: Option<&Run>,
@@ -131,7 +142,7 @@ fn handle_change_cwd(
     now: Timestamp,
 ) -> Result<TransitionOutcome, TransitionError> {
     if let Some(run) = active_run
-        && (run.status == RunStatus::Running || run.status == RunStatus::CancelRequested)
+        && is_run_blocking_session_mutation(run.status)
     {
         return Err(TransitionError::CwdConflictActiveRun);
     }
@@ -159,7 +170,7 @@ fn handle_archive_session(
     now: Timestamp,
 ) -> Result<TransitionOutcome, TransitionError> {
     if let Some(run) = active_run
-        && (run.status == RunStatus::Running || run.status == RunStatus::CancelRequested)
+        && is_run_blocking_session_mutation(run.status)
     {
         return Err(TransitionError::ArchiveBlockedByActiveRun);
     }

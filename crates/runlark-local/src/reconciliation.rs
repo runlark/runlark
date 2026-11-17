@@ -61,8 +61,8 @@ impl ReconciliationEngine {
         })
     }
 
-    /// Reconciles state when a daemon process was abruptly killed:
-    /// Active runs without live heartbeat are marked `Interrupted`.
+    /// Marks an inflight run (`running`, `cancel_requested`, or `queued`) as `Interrupted`,
+    /// leaving terminal runs untouched.
     ///
     /// # Errors
     /// Returns `StorageError` if SQL update fails.
@@ -72,7 +72,10 @@ impl ReconciliationEngine {
         now: Timestamp,
     ) -> Result<(), StorageError> {
         conn.execute(
-            "UPDATE runs SET status = 'interrupted', updated_at = ?2 WHERE run_id = ?1",
+            concat!(
+                "UPDATE runs SET status = 'interrupted', updated_at = ?2 ",
+                "WHERE run_id = ?1 AND status IN ('running', 'cancel_requested', 'queued')"
+            ),
             params![run_id.as_ref(), to_sql_i64(now.0)],
         )?;
         Ok(())
@@ -89,16 +92,8 @@ impl ReconciliationEngine {
         let inflight = Self::scan_inflight(conn)?;
 
         let tx = conn.transaction()?;
-        for (run_id, _, status) in &inflight.active_runs {
-            if matches!(
-                *status,
-                RunStatus::Running | RunStatus::CancelRequested | RunStatus::Queued
-            ) {
-                tx.execute(
-                    "UPDATE runs SET status = 'interrupted', updated_at = ?2 WHERE run_id = ?1",
-                    params![run_id.as_ref(), to_sql_i64(now.0)],
-                )?;
-            }
+        for (run_id, _, _) in &inflight.active_runs {
+            Self::mark_interrupted(&tx, run_id, now)?;
         }
         tx.commit()?;
 

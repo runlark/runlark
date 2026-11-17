@@ -87,10 +87,12 @@ fn test_stop_run_transitions_to_cancel_requested_not_stopped() {
     assert_eq!(run.status, RunStatus::CancelRequested);
 
     assert_eq!(outcome.events.len(), 1);
-    assert!(matches!(
-        &outcome.events[0],
-        DomainEvent::RunCancelRequested { .. }
-    ));
+    match &outcome.events[0] {
+        DomainEvent::RunCancelRequested { reason, .. } => {
+            assert_eq!(reason.as_deref(), Some("User requested stop"));
+        }
+        other => panic!("expected RunCancelRequested, got {other:?}"),
+    }
 }
 
 #[test]
@@ -152,6 +154,18 @@ fn test_cwd_and_archive_guards() {
     });
     assert_eq!(
         transition(&session, Some(&active_run), &archive_cmd, Timestamp(2000)).unwrap_err(),
+        TransitionError::ArchiveBlockedByActiveRun
+    );
+
+    // ChangeCwd and ArchiveSession must also fail while run is WaitingForApproval
+    let mut approval_run = active_run;
+    approval_run.status = RunStatus::WaitingForApproval;
+    assert_eq!(
+        transition(&session, Some(&approval_run), &cwd_cmd, Timestamp(2000)).unwrap_err(),
+        TransitionError::CwdConflictActiveRun
+    );
+    assert_eq!(
+        transition(&session, Some(&approval_run), &archive_cmd, Timestamp(2000)).unwrap_err(),
         TransitionError::ArchiveBlockedByActiveRun
     );
 

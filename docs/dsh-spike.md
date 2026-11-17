@@ -177,7 +177,7 @@ specified for `@deepseek-ai/dsh-api-session-controller`.
 
 The patch introduces `SessionCommandInterceptor` in
 `packages/api/session-controller/src/commands.ts`. Unmanaged sessions bypass the interceptor and
-execute 100% native logic with zero overhead or behavioral changes.
+execute native logic without behavioral changes (adding only a fast `handles()` check).
 
 ```ts
 import type { SessionId, MessageSource } from "@deepseek-ai/dsh-session";

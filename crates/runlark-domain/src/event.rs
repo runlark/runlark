@@ -24,6 +24,7 @@ pub enum DomainEvent {
     RunCancelRequested {
         run_id: RunId,
         command_id: CommandId,
+        reason: Option<String>,
         timestamp: Timestamp,
     },
     RunStopped {

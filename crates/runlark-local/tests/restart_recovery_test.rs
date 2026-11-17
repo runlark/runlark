@@ -172,5 +172,24 @@ fn test_restart_recovery_reconciles_cancelling_and_queued_runs() {
         // After reconciliation, active_runs query returns 0
         let after = ReconciliationEngine::scan_inflight(&conn).expect("scan inflight after");
         assert_eq!(after.active_runs.len(), 0);
+
+        // Terminal runs must never be overwritten by mark_interrupted
+        let completed_run = Run {
+            id: RunId::from("run_done"),
+            session_id: SessionId::from("sess_queued"),
+            status: RunStatus::Completed,
+            worktree_path: "/workspace/done".to_string(),
+            revision: Revision(1),
+            created_at: Timestamp(1100),
+            updated_at: Timestamp(1200),
+        };
+        SessionStore::save_run(&conn, &completed_run).expect("save completed run");
+        ReconciliationEngine::mark_interrupted(&conn, &completed_run.id, Timestamp(4000))
+            .expect("mark_interrupted should not error on terminal run");
+        let fetched_done = SessionStore::get_run(&conn, &completed_run.id)
+            .expect("fetch completed run")
+            .expect("completed run exists");
+        assert_eq!(fetched_done.status, RunStatus::Completed);
+        assert_eq!(fetched_done.updated_at, Timestamp(1200));
     }
 }
