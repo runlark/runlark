@@ -4,16 +4,22 @@ set -euo pipefail
 : "${GITHUB_REPOSITORY:?GitHub Actions repository is required}"
 : "${GITHUB_RUN_ID:?GitHub Actions run ID is required}"
 mkdir -p .reports
-rm -f .reports/outcomes.json .reports/sych-ci.json
+rm -f .reports/outcomes.json .reports/sych-ci.json .reports/clippy.json
 status=0
 just check || status=$?
+
+if [[ -f Cargo.toml ]] && command -v cargo >/dev/null 2>&1; then
+    cargo clippy --workspace --all-targets --all-features --message-format=json >.reports/clippy.json 2>/dev/null || true
+fi
+
 jq -n --argjson code "${status}" \
     '{schema_version: 1, commands: [{name: "just check", exit_code: $code}]}' >.reports/outcomes.json
 oid="$(git rev-parse HEAD)"
 node_version="$(node --version)"
+rustc_version="$(rustc --version 2>/dev/null || echo "none")"
 target="$(uname -sm)"
 jq -n --arg job "github:${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-    --arg oid "${oid}" --arg toolchain "node ${node_version}" \
+    --arg oid "${oid}" --arg toolchain "rustc ${rustc_version}, node ${node_version}" \
     --arg target "${target}" \
     '{schema_version: 1, job: $job, tested_oid: $oid, toolchain: $toolchain, target: $target, features: []}' >.reports/sych-ci.json
 exit "${status}"
