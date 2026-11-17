@@ -5,7 +5,10 @@ exclude:
   - "scripts/**"
   - ".agents/**"
   - "docs/**"
-  - "web/**"
+  - "oxlint.config.ts"
+  - "web/dist/**"
+  - "web/.generated/**"
+  - "web/.impeccable/**"
 
 components:
   runlark-domain:
@@ -22,12 +25,71 @@ components:
 
   dsh-plugin:
     in: packages/dsh-plugin/**
-    because: "DSH integration and host bridge adapter for browser/desktop DSH UI"
+    except: packages/dsh-plugin/src/ui/**
+    because: "DSH host bridge, interceptor and Cordis service adapter; communicates with Runlark daemon via IPC/HTTP"
+
+  dsh-plugin-ui:
+    in: packages/dsh-plugin/src/ui/**
+    optional: true
+    priority: 1
+    because: "DSH client UI slot mounting (ui-dockkit, ui-sidebar-right, tool.call.toolview) for Runlark web views"
+
+  web-app:
+    in: web/src/app/**
+    optional: true
+    public:
+      - web/src/app/index.ts
+      - web/src/app/index.tsx
+    because: "FEOD app layer: bootstrap, router, layouts and DSH view composition; no business logic"
+
+  web-pages:
+    in: web/src/pages/**
+    optional: true
+    because: "FEOD pages layer: thin page and panel composition over modules and common UI"
+
+  web-modules:
+    in: web/src/modules/**
+    optional: true
+    public:
+      - "web/src/modules/*/index.ts"
+      - "web/src/modules/*/index.tsx"
+    because: "FEOD modules layer: isolated domain state and UI modules exposing only public index entries"
+
+  web-common-ui:
+    in: web/src/common/ui/**
+    optional: true
+    priority: 1
+    because: "Presentational Mantine v9 adapter components exposing readonly props/slots contracts"
+
+  web-common:
+    in: web/src/common/**
+    except: web/src/common/ui/**
+    optional: true
+    because: "FEOD common layer: shared pure utilities and contracts; cannot import modules, pages or app"
+
+  web-global:
+    in: web/src/global/**
+    optional: true
+    allow_importers: []
+    because: "FEOD global layer: ambient declarations and CSS tokens; never imported directly"
+
+  web-stories:
+    in: web/stories/**
+    optional: true
+    allow_importers: []
+    because: "Storybook UI kit examples and fixtures, isolated from production application code"
 
 layers:
   - runlark-cli
   - runlark-local
   - runlark-domain
+
+forbid_external:
+  - name: "@mantine"
+    allow: [web-common-ui]
+    because: "Only web/src/common/ui/<component> adapters may import Mantine; consume readonly props/slots contracts instead"
+  - name: "@reatom/jsx"
+    because: "Runlark uses React + Mantine adapters with Reatom v1001, never @reatom/jsx"
 
 rules:
   runlark-domain:
@@ -41,7 +103,71 @@ rules:
 
   dsh-plugin:
     may_depend_on: []
+    forbid_external:
+      - name: react
+        because: "DSH host bridge runs in Node Cordis runtime, not React renderer"
+      - name: react-dom
+        because: "DSH host bridge runs in Node Cordis runtime, not browser DOM"
+      - name: "@reatom"
+        because: "DSH host bridge must not depend on frontend Reatom state"
     because: "DSH plugin interacts with Runlark daemon via IPC/HTTP, not direct code imports"
+
+  dsh-plugin-ui:
+    may_depend_on:
+      - web-app
+    forbid_external:
+      - name: "@reatom"
+        because: "DSH slot wrappers mount web-app views; Reatom state lives in web modules/app"
+    because: "DSH client UI slots mount only the web-app public entry"
+
+  web-app:
+    may_depend_on:
+      - web-pages
+      - web-modules
+      - web-common-ui
+      - web-common
+    because: "FEOD app layer composes pages, modules and common layers downwards only"
+
+  web-pages:
+    may_depend_on:
+      - web-modules
+      - web-common-ui
+      - web-common
+    because: "FEOD pages layer composes modules and common UI; cannot import app or other layers above"
+
+  web-modules:
+    may_depend_on:
+      - web-modules
+      - web-common-ui
+      - web-common
+    because: "FEOD modules may import common, common/ui and other modules via public entries only"
+
+  web-common-ui:
+    may_depend_on:
+      - web-common
+    forbid_external:
+      - name: "@reatom"
+        because: "Presentational common/ui adapters must be pure props/slots-only without Reatom hooks or state"
+    because: "Presentational Mantine UI adapters depend only on common utilities and Mantine"
+
+  web-common:
+    may_depend_on: []
+    forbid_external:
+      - name: "@reatom"
+        because: "Common utilities stay framework-state-agnostic; bind Reatom in modules or app"
+    because: "FEOD common layer cannot import modules, pages, app or Mantine UI adapters"
+
+  web-global:
+    may_depend_on: []
+    because: "Global declarations are ambient and never import or get imported by FEOD layers"
+
+  web-stories:
+    may_depend_on:
+      - web-pages
+      - web-modules
+      - web-common-ui
+      - web-common
+    because: "Storybook stories exercise UI kit adapters and views without being imported by production code"
 
 examples:
   - from: crates/runlark-domain/src/lib.rs
@@ -73,4 +199,49 @@ examples:
     expect: allowed
   - from: crates/runlark-cli/src/lib.rs
     to: crates/runlark-domain/src/lib.rs
+    expect: allowed
+  - from: packages/dsh-plugin/src/index.ts
+    to: web/src/app/index.tsx
+    expect: rejected
+  - from: packages/dsh-plugin/src/ui/slots.tsx
+    to: web/src/app/index.tsx
+    expect: allowed
+  - from: packages/dsh-plugin/src/ui/slots.tsx
+    to: web/src/modules/task-flow/internal.ts
+    expect: rejected
+  - from: packages/dsh-plugin/src/ui/slots.tsx
+    to: crates/runlark-domain/src/lib.rs
+    expect: rejected
+  - from: web/src/app/index.tsx
+    to: web/src/pages/board.tsx
+    expect: allowed
+  - from: web/src/pages/board.tsx
+    to: web/src/modules/task-flow/index.ts
+    expect: allowed
+  - from: web/src/pages/board.tsx
+    to: web/src/modules/task-flow/internal.ts
+    expect: rejected
+  - from: web/src/pages/board.tsx
+    to: web/src/app/index.tsx
+    expect: rejected
+  - from: web/src/modules/task-flow/view.tsx
+    to: web/src/common/ui/BoardCard.tsx
+    expect: allowed
+  - from: web/src/modules/task-flow/view.tsx
+    to: web/src/pages/board.tsx
+    expect: rejected
+  - from: web/src/common/ui/BoardCard.tsx
+    to: web/src/modules/task-flow/index.ts
+    expect: rejected
+  - from: web/src/common/format.ts
+    to: web/src/common/ui/BoardCard.tsx
+    expect: rejected
+  - from: web/src/app/index.tsx
+    to: web/stories/Board.stories.tsx
+    expect: rejected
+  - from: web/src/app/index.tsx
+    to: web/src/global/env.d.ts
+    expect: rejected
+  - from: web/stories/Board.stories.tsx
+    to: web/src/common/ui/BoardCard.tsx
     expect: allowed

@@ -28,6 +28,12 @@ pub enum TransitionError {
     #[error("Run is currently cancelling")]
     RunCancelling,
 
+    #[error("Run is waiting for human approval or question answer")]
+    RunWaitingForApproval,
+
+    #[error("Run is not waiting for human approval or question answer")]
+    RunNotWaitingForApproval,
+
     #[error("Active run mismatch: active {active}, requested {requested}")]
     ActiveRunMismatch { active: RunId, requested: RunId },
 

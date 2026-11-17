@@ -14,6 +14,13 @@ const forbidden = files.filter((file) => {
         return false;
     }
 
+    if (
+        (file.startsWith("web/") || file.startsWith("packages/dsh-plugin/")) &&
+        /\.(?:tsx|css)$/.test(file)
+    ) {
+        return false;
+    }
+
     return (
         /(?:^|\/)(?:Dockerfile)$/.test(file) ||
         /\.(?:[cm]?js|[jt]sx|sh|bash|wasm|wit|py|go|lean|tsp|css|scss|html)$/.test(file)

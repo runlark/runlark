@@ -1,0 +1,40 @@
+{
+  "srcRoot": "web/src",
+  "aliasPrefix": "@",
+  "aliasRoot": "web/src",
+  "modulePages": true,
+  "singleFileModules": false,
+  "transitModules": [],
+  "common": {
+    "maxDepth": 2
+  },
+  "modules": {
+    "requirePublicEntry": true
+  },
+  "cycles": {
+    "modules": true,
+    "files": true
+  },
+  "extra": {
+    "confine": [
+      {
+        "name": "mantine-ui-adapters",
+        "imports": ["@mantine/*"],
+        "allowedIn": ["web/src/common/ui/**"],
+        "message": "Only web/src/common/ui/<component> adapters may import Mantine; consume readonly props/slots contracts instead."
+      },
+      {
+        "name": "no-reatom-jsx",
+        "imports": ["@reatom/jsx", "@reatom/jsx/**"],
+        "allowedIn": [],
+        "message": "Runlark uses React + Mantine adapters with Reatom v1001, never @reatom/jsx."
+      },
+      {
+        "name": "no-reatom-in-presentational-ui",
+        "imports": ["@reatom/*", "@reatom"],
+        "allowedIn": ["web/src/app/**", "web/src/pages/**", "web/src/modules/**"],
+        "message": "Presentational common/ui adapters and common helpers must remain pure props/slots-only without Reatom hooks or state."
+      }
+    ]
+  }
+}

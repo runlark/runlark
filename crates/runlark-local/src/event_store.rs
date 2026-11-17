@@ -1,6 +1,6 @@
 use crate::connection::{from_sql_i64, to_sql_i64};
 use crate::error::StorageError;
-use runlark_domain::{EventSeq, RunId, Timestamp};
+use runlark_domain::{DomainEvent, EventSeq, RunId, Timestamp};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +16,41 @@ pub struct StoredEvent {
 pub struct EventStore;
 
 impl EventStore {
-    /// Appends a new domain event to the append-only event log.
+    /// Returns the canonical event type label for a `DomainEvent`.
+    #[must_use]
+    pub fn domain_event_type(event: &DomainEvent) -> &'static str {
+        match event {
+            DomainEvent::SessionCreated { .. } => "SessionCreated",
+            DomainEvent::RunCreated { .. } => "RunCreated",
+            DomainEvent::PromptEnqueued { .. } => "PromptEnqueued",
+            DomainEvent::QuestionAsked { .. } => "QuestionAsked",
+            DomainEvent::QuestionAnswered { .. } => "QuestionAnswered",
+            DomainEvent::RunCancelRequested { .. } => "RunCancelRequested",
+            DomainEvent::RunStopped { .. } => "RunStopped",
+            DomainEvent::RunCompleted { .. } => "RunCompleted",
+            DomainEvent::RunFailed { .. } => "RunFailed",
+            DomainEvent::RunInterrupted { .. } => "RunInterrupted",
+            DomainEvent::CwdChanged { .. } => "CwdChanged",
+            DomainEvent::SessionArchived { .. } => "SessionArchived",
+            DomainEvent::SessionResumed { .. } => "SessionResumed",
+        }
+    }
+
+    /// Allocates the next monotonically increasing sequence number for a run.
+    ///
+    /// # Errors
+    /// Returns `StorageError` if the SQL query fails or sequence overflows `i64`.
+    pub fn next_seq(conn: &Connection, run_id: &RunId) -> Result<EventSeq, StorageError> {
+        let next: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(seq), -1) + 1 FROM events WHERE run_id = ?1",
+            params![run_id.as_ref()],
+            |row| row.get(0),
+        )?;
+        let seq = from_sql_i64(next, 0).map_err(StorageError::Sqlite)?;
+        Ok(EventSeq(seq))
+    }
+
+    /// Appends a new domain event to the append-only event log with an explicit sequence number.
     ///
     /// # Errors
     /// Returns `StorageError` if SQL insertion fails.
@@ -42,6 +76,53 @@ impl EventStore {
             ],
         )?;
         Ok(())
+    }
+
+    /// Appends a `DomainEvent` to the append-only event log, allocating the next monotonic
+    /// sequence number for `run_id`.
+    ///
+    /// # Errors
+    /// Returns `StorageError` if serialization, sequence allocation, or SQL insertion fails.
+    pub fn append_domain_event(
+        conn: &Connection,
+        run_id: &RunId,
+        event: &DomainEvent,
+        now: Timestamp,
+    ) -> Result<StoredEvent, StorageError> {
+        let seq = Self::next_seq(conn, run_id)?;
+        let event_type = Self::domain_event_type(event).to_string();
+        let payload = serde_json::to_string(event)?;
+        Self::append_event(conn, run_id, seq, &event_type, &payload, now)?;
+        Ok(StoredEvent {
+            run_id: run_id.clone(),
+            seq,
+            event_type,
+            payload,
+            created_at: now,
+        })
+    }
+
+    /// Appends a raw external DSH wire event record to the run's event log, allocating
+    /// the next monotonic sequence number.
+    ///
+    /// # Errors
+    /// Returns `StorageError` if sequence allocation or SQL insertion fails.
+    pub fn append_wire_event(
+        conn: &Connection,
+        run_id: &RunId,
+        event_type: &str,
+        payload: &str,
+        now: Timestamp,
+    ) -> Result<StoredEvent, StorageError> {
+        let seq = Self::next_seq(conn, run_id)?;
+        Self::append_event(conn, run_id, seq, event_type, payload, now)?;
+        Ok(StoredEvent {
+            run_id: run_id.clone(),
+            seq,
+            event_type: event_type.to_string(),
+            payload: payload.to_string(),
+            created_at: now,
+        })
     }
 
     /// Fetches events for a given run strictly after the specified sequence number.

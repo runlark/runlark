@@ -33,11 +33,14 @@ test("documentation, tooling and preserved vendor guidance pass", () => {
     assert.equal(result.status, 0, result.stderr);
 });
 
-test("integrated languages (Rust, TypeScript, SQL) pass scope check", () => {
+test("integrated languages (Rust, TypeScript/TSX, CSS, SQL) pass scope check", () => {
     const result = check([
         "crates/runlark-domain/src/lib.rs",
         "Cargo.toml",
         "packages/dsh-plugin/src/index.ts",
+        "packages/dsh-plugin/src/ui/slots.tsx",
+        "web/src/app/index.tsx",
+        "web/src/common/workbench.css",
         "crates/runlark-local/migrations/0001_initial.sql",
     ]);
 
@@ -45,7 +48,8 @@ test("integrated languages (Rust, TypeScript, SQL) pass scope check", () => {
 });
 
 for (const file of [
-    "web/src/app.tsx",
+    "other/app.tsx",
+    "web/app.jsx",
     "web/tool.js",
     "bin/build.sh",
     "images/check/Dockerfile",
@@ -55,7 +59,7 @@ for (const file of [
     "services/backend.go",
     "scripts/deploy.py",
     "spec/api.tsp",
-    "web/styles.css",
+    "web/styles.scss",
     "web/index.html",
 ]) {
     test(`unintegrated product source is refused: ${file}`, () => {

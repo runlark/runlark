@@ -1,9 +1,11 @@
 use runlark_domain::{
-    CommandId, Revision, Run, RunId, RunStatus, SendPromptCommand, Session, SessionCommand,
-    SessionId, SessionStatus, TaskId, Timestamp,
+    AnswerQuestionCommand, CommandId, QuestionId, QuestionStatus, Revision, Run, RunId, RunStatus,
+    SendPromptCommand, Session, SessionCommand, SessionId, SessionStatus, TaskId, Timestamp,
+    TurnEndStatus,
 };
 use runlark_local::{
-    CommandStore, ReconciliationEngine, SessionStore, initialize_schema, open_sqlite,
+    CommandApplyOutcome, CommandStore, EventStore, LocalStore, QuestionStore, ReconciliationEngine,
+    SessionStore, initialize_schema, open_sqlite,
 };
 use tempfile::NamedTempFile;
 
@@ -192,4 +194,154 @@ fn test_restart_recovery_reconciles_cancelling_and_queued_runs() {
         assert_eq!(fetched_done.status, RunStatus::Completed);
         assert_eq!(fetched_done.updated_at, Timestamp(1200));
     }
+}
+
+fn seed_waiting_and_active_runs(db_path: &std::path::Path) {
+    let mut conn = open_sqlite(db_path).expect("open db");
+    initialize_schema(&conn).expect("init schema");
+
+    let sess_wait = Session {
+        id: SessionId::from("sess_wait"),
+        task_id: TaskId::from("task_wait"),
+        cwd: "/workspace/wait".to_string(),
+        status: SessionStatus::Created,
+        current_revision: Revision(1),
+        active_run_id: None,
+        created_at: Timestamp(1000),
+        updated_at: Timestamp(1000),
+    };
+    SessionStore::create_session(&conn, &sess_wait).expect("create waiting session");
+
+    let prompt_cmd = SessionCommand::SendPrompt(SendPromptCommand {
+        command_id: CommandId::from("cmd_wait_start"),
+        session_id: sess_wait.id.clone(),
+        run_id: RunId::from("run_wait"),
+        prompt: "Prepare release".to_string(),
+        expected_revision: Revision(1),
+        created_at: Timestamp(1010),
+    });
+    LocalStore::apply_command(&mut conn, &prompt_cmd, Timestamp(1010)).expect("start run");
+
+    LocalStore::record_user_question(
+        &mut conn,
+        &sess_wait.id,
+        &RunId::from("run_wait"),
+        &QuestionId::from("q_approve"),
+        "Approve production deploy?",
+        &["Approve".to_string(), "Abort".to_string()],
+        Timestamp(1020),
+    )
+    .expect("record question");
+
+    let sess_active = Session {
+        id: SessionId::from("sess_active"),
+        task_id: TaskId::from("task_active"),
+        cwd: "/workspace/active".to_string(),
+        status: SessionStatus::Active,
+        current_revision: Revision(1),
+        active_run_id: Some(RunId::from("run_active")),
+        created_at: Timestamp(1000),
+        updated_at: Timestamp(1000),
+    };
+    SessionStore::create_session(&conn, &sess_active).expect("create active session");
+    SessionStore::save_run(
+        &conn,
+        &Run {
+            id: RunId::from("run_active"),
+            session_id: sess_active.id,
+            status: RunStatus::Running,
+            worktree_path: "/workspace/active".to_string(),
+            revision: Revision(1),
+            created_at: Timestamp(1000),
+            updated_at: Timestamp(1000),
+        },
+    )
+    .expect("save active run");
+}
+
+#[test]
+fn test_restart_recovery_preserves_waiting_for_approval_and_pending_questions() {
+    let temp_db = NamedTempFile::new().expect("create temp db file");
+    let db_path = temp_db.path().to_path_buf();
+    seed_waiting_and_active_runs(&db_path);
+
+    let mut conn = open_sqlite(&db_path).expect("reopen db");
+    let inflight =
+        ReconciliationEngine::reconcile_on_startup(&mut conn, Timestamp(2000)).expect("reconcile");
+
+    assert_eq!(inflight.active_runs.len(), 1);
+    assert_eq!(inflight.active_runs[0].0, RunId::from("run_active"));
+    assert_eq!(
+        inflight.waiting_runs,
+        vec![(RunId::from("run_wait"), SessionId::from("sess_wait"))]
+    );
+    assert_eq!(inflight.pending_questions.len(), 1);
+    assert_eq!(
+        inflight.pending_questions[0].id,
+        QuestionId::from("q_approve")
+    );
+
+    // Running run became Interrupted and recorded RunInterrupted event
+    let active_after = SessionStore::get_run(&conn, &RunId::from("run_active"))
+        .expect("get active run")
+        .expect("exists");
+    assert_eq!(active_after.status, RunStatus::Interrupted);
+    let active_events =
+        EventStore::get_events(&conn, &RunId::from("run_active"), None).expect("events");
+    assert_eq!(active_events.len(), 1);
+    assert_eq!(active_events[0].event_type, "RunInterrupted");
+
+    // WaitingForApproval run and Pending question MUST survive restart intact
+    let wait_run = SessionStore::get_run(&conn, &RunId::from("run_wait"))
+        .expect("get wait run")
+        .expect("exists");
+    assert_eq!(wait_run.status, RunStatus::WaitingForApproval);
+    let q_after = QuestionStore::get_question(&conn, &QuestionId::from("q_approve"))
+        .expect("get question")
+        .expect("exists");
+    assert_eq!(q_after.status, QuestionStatus::Pending);
+
+    // User answers the question after restart, then turn completes cleanly
+    let sess_now = SessionStore::get_session(&conn, &SessionId::from("sess_wait"))
+        .expect("get sess")
+        .expect("exists");
+    let answer_outcome = LocalStore::answer_question(
+        &mut conn,
+        AnswerQuestionCommand {
+            command_id: CommandId::from("cmd_answer_after_restart"),
+            session_id: sess_now.id.clone(),
+            run_id: wait_run.id.clone(),
+            question_id: QuestionId::from("q_approve"),
+            answer: "Approve".to_string(),
+            expected_revision: sess_now.current_revision,
+            created_at: Timestamp(3000),
+        },
+        Timestamp(3000),
+    )
+    .expect("answer question after restart");
+    assert!(matches!(
+        answer_outcome,
+        CommandApplyOutcome::Applied { .. }
+    ));
+
+    let resumed_run = SessionStore::get_run(&conn, &wait_run.id)
+        .expect("get resumed run")
+        .expect("exists");
+    assert_eq!(resumed_run.status, RunStatus::Running);
+    assert!(
+        QuestionStore::list_pending(&conn)
+            .expect("list pending")
+            .is_empty()
+    );
+
+    let finished = LocalStore::record_turn_end(
+        &mut conn,
+        &sess_now.id,
+        &wait_run.id,
+        TurnEndStatus::Completed,
+        Timestamp(4000),
+    )
+    .expect("complete turn");
+    assert_eq!(finished.run.status, RunStatus::Completed);
+    assert_eq!(finished.session.active_run_id, None);
 }

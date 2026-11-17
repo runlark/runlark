@@ -31,7 +31,10 @@ lint-rust:
     cargo deny check
 
 lint-ts:
-    cd packages/dsh-plugin && npx tsc --noEmit
+    cd packages/dsh-plugin && npx tsc --noEmit && npx tsc -p src/ui/tsconfig.json --noEmit
+
+lint-ui:
+    npm run lint:ui
 
 lint-files:
     npm run format:check
@@ -56,7 +59,7 @@ security:
     npm run audit
     gitleaks dir . --redact --no-banner
 
-lint: lint-scope lint-size lint-arch lint-rust lint-ts lint-files lint-skills security
+lint: lint-scope lint-size lint-arch lint-rust lint-ts lint-ui lint-files lint-skills security
 
 # Observable guard behavior against isolated real Git repositories.
 test:

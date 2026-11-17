@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Завершён этап A0: управляемая DSH-сессия и локальный durable run готовы к переходу к A1 (solo alpha).
+- Реализован durable command layer и outbox-диспетчер (`crates/runlark-cli`, `crates/runlark-local`): атомарное сохранение намерения в SQLite до внешнего эффекта (`pending -> dispatched -> acked | failed`), ретраи со сбросом `error_message`, сохранение `unknown` (504/таймаут) до сверки, идемпотентность и 409 при конфликте payload или `expected_revision`.
+- Реализовано управление изолированными git worktrees (`$WORKSPACE/.runlark/worktrees/<run_id>`) и CWD confinement для запускаемых сессий.
+- Подготовлен патч перехватчика команд для `@deepseek-ai/dsh-api-session-controller@0.2.2-rc.3` (`SessionCommandInterceptor`), host bridge с динамической синхронизацией ревизий, HTTP-маршруты `/api/runlark/*`, `DshSubscriber` для подписки на `session/follow` (`/api/remote.mux`) и сверка `turn/start` / `turn/end` (включая crash-repair `interrupted` и `CancelRequested -> Stopped`).
+- Реализована сквозная обработка человеческих вопросов `WaitingForApproval` (`ask_user_question`): сохранение в SQLite, выживание после раздельных рестартов Rust-демона и DSH, автооткрытие вкладки и восстановление карточки вопроса в DSH UI, а также продолжение run после ответа.
+- Построен и подключён frontend DSH UI-карточки по правилам FEOD, Mantine и Impeccable (`web/src`, `packages/dsh-plugin/src/ui`), а также расширен A0 failure-path smoke (`scripts/smoke.mjs` и `scripts/smoke-dsh-e2e.mjs` с реальным `dsh 0.2.2-rc.3`).
 - Зафиксирован DSH spike (`deepseek-ai/deepseek-harness`, `dsh-v0.2.2-rc.3`) и спецификация перехватчика команд (`docs/dsh-spike.md`).
 - Подключены архитектурные границы `easement.yml` (`--require-evidence`), реальные Rust/TS/SQLite/process-smoke гейты и вертикальный срез A0 (`runlark-domain`, `runlark-local`, `runlark-cli`, `packages/dsh-plugin`).
 - Для организации runlark настроен отдельный приватный Sych App; current-head waiter ожидает `runlark-sych-reviewer[bot]`.

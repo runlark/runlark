@@ -1,19 +1,47 @@
 {
   "name": "runlark-tooling",
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "engines": {
     "node": ">=24 <25"
   },
   "scripts": {
+    "postinstall": "node scripts/apply-dsh-patch.mjs --if-present",
+    "build:dsh-client": "node scripts/build-dsh-client.mjs",
     "format:check": "oxfmt --check .",
     "format": "oxfmt --write .",
     "lint:markdown": "markdownlint-cli2",
+    "typecheck:ts": "tsc -p packages/dsh-plugin/tsconfig.json --noEmit && tsc -p packages/dsh-plugin/src/ui/tsconfig.json --noEmit",
+    "lint:oxlint": "oxlint --config oxlint.config.ts packages/dsh-plugin",
+    "lint:feod": "node .agents/skills/feod/scripts/feod.mjs info --json",
+    "lint:ui": "node scripts/lint-ui.mjs",
+    "test:ui-gates": "node --test scripts/ui-gates.test.mjs",
     "audit": "npm audit --audit-level=low"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-client-store": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-client-ui-session": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-client-ui-sidebar-right": "0.2.2-rc.3",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.2-rc.3",
+    "@mantine/core": "8.3.18",
+    "@mantine/hooks": "8.3.18",
+    "@o-feod/oxlint-structure-plugin": "0.1.7",
+    "@reatom/core": "1001.3.0",
+    "@reatom/react": "1001.0.1",
     "@types/node": "^26.6.6",
+    "@types/react": "18.3.28",
+    "@types/react-dom": "18.3.7",
+    "esbuild": "0.28.2",
+    "jsdom": "26.1.0",
     "markdownlint-cli2": "0.24.1",
     "oxfmt": "0.78.0",
+    "oxlint": "1.94.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
     "typescript": "^7.0.2"
   },
   "overrides": {
