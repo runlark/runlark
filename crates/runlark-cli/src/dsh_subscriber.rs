@@ -105,6 +105,40 @@ pub struct DshSubscriber {
     poll_interval: Duration,
 }
 
+/// Authenticates against a DSH host `/connect?token=...` endpoint and returns the resulting
+/// session `Cookie` header value, if any.
+pub(crate) async fn authenticate_dsh_cookie(
+    http: &Client,
+    origin: &str,
+    token: Option<&str>,
+) -> Result<Option<String>, String> {
+    let Some(token) = token.filter(|t| !t.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let connect_url = format!("{origin}/connect?token={token}&interactions=none");
+    let resp = http
+        .get(&connect_url)
+        .send()
+        .await
+        .map_err(|e| format!("DSH /connect request failed: {e}"))?;
+
+    if !resp.status().is_redirection() && !resp.status().is_success() {
+        return Err(format!("DSH /connect rejected with {}", resp.status()));
+    }
+
+    let cookie = resp
+        .headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|val| val.to_str().ok())
+        .filter_map(|raw| raw.split(';').next())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    Ok((!cookie.is_empty()).then_some(cookie))
+}
+
 impl DshSubscriber {
     /// Creates a new [`DshSubscriber`] targeting `dsh_url`.
     ///
@@ -158,35 +192,12 @@ impl DshSubscriber {
     }
 
     async fn authenticate_cookie(&self) -> Result<Option<String>, String> {
-        let Some(ref token) = self.endpoint.token else {
-            return Ok(None);
-        };
-        let connect_url = format!(
-            "{}/connect?token={token}&interactions=none",
-            self.endpoint.origin
-        );
-        let resp = self
-            .http
-            .get(&connect_url)
-            .send()
-            .await
-            .map_err(|e| format!("DSH /connect request failed: {e}"))?;
-
-        if !resp.status().is_redirection() && !resp.status().is_success() {
-            return Err(format!("DSH /connect rejected with {}", resp.status()));
-        }
-
-        let cookie = resp
-            .headers()
-            .get_all(reqwest::header::SET_COOKIE)
-            .iter()
-            .filter_map(|val| val.to_str().ok())
-            .filter_map(|raw| raw.split(';').next())
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join("; ");
-
-        Ok((!cookie.is_empty()).then_some(cookie))
+        authenticate_dsh_cookie(
+            &self.http,
+            &self.endpoint.origin,
+            self.endpoint.token.as_deref(),
+        )
+        .await
     }
 
     async fn run_connection(
@@ -366,12 +377,13 @@ impl DshSubscriber {
                 };
                 match frame {
                     FollowFrame::Snapshot { records } => {
-                        for record in records {
-                            self.apply_wire(&session_id, &record.event);
-                        }
+                        self.apply_wire_batch(
+                            &session_id,
+                            records.iter().map(|record| &record.event),
+                        );
                     }
                     FollowFrame::Event { event } => {
-                        self.apply_wire(&session_id, &event);
+                        self.apply_wire_batch(&session_id, std::iter::once(&event));
                     }
                     FollowFrame::AssistantStream {} => {}
                 }
@@ -390,19 +402,29 @@ impl DshSubscriber {
         }
     }
 
-    fn apply_wire(&self, session_id: &SessionId, event: &DshWireEvent) {
-        let Ok(mut conn) = open_sqlite(&self.state.db_path) else {
-            return;
+    fn apply_wire_batch<'a>(
+        &self,
+        session_id: &SessionId,
+        events: impl IntoIterator<Item = &'a DshWireEvent>,
+    ) {
+        let mut conn = match open_sqlite(&self.state.db_path) {
+            Ok(conn) => conn,
+            Err(err) => {
+                tracing::debug!("Failed to open SQLite for wire events on {session_id}: {err}");
+                return;
+            }
         };
-        let now = Timestamp(AppState::current_timestamp_ms());
-        if let Err(err) =
-            process_dsh_wire_event(&mut conn, &self.state, session_id, None, event, now)
-        {
-            tracing::debug!(
-                "Ignoring/failed wire event {} for {}: {err}",
-                event.event_type,
-                session_id
-            );
+        for event in events {
+            let now = Timestamp(AppState::current_timestamp_ms());
+            if let Err(err) =
+                process_dsh_wire_event(&mut conn, &self.state, session_id, None, event, now)
+            {
+                tracing::debug!(
+                    "Ignoring/failed wire event {} for {}: {err}",
+                    event.event_type,
+                    session_id
+                );
+            }
         }
     }
 }

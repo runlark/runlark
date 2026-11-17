@@ -1,6 +1,9 @@
+use crate::dsh_subscriber::authenticate_dsh_cookie;
 use crate::worktree::WorktreeManager;
 use reqwest::Client;
 use reqwest::StatusCode;
+use reqwest::header::{AUTHORIZATION, COOKIE, ORIGIN};
+use reqwest::redirect::Policy;
 use runlark_domain::{SessionCommand, Timestamp};
 use runlark_local::{CommandStore, PersistedCommand, SessionStore, StorageError, open_sqlite};
 use serde::Serialize;
@@ -9,7 +12,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::sync::{Notify, watch};
+use tokio::sync::{Notify, RwLock, watch};
 
 /// Outcome of dispatching a persisted outbox command to the external DSH runtime.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,25 +95,98 @@ struct HttpDispatchPayload<'a> {
 /// HTTP DSH bridge effector forwarding persisted commands to a DSH host bridge endpoint.
 pub struct HttpDshEffector {
     client: Client,
+    origin: String,
     endpoint: String,
+    token: Option<String>,
+    cookie: RwLock<Option<String>>,
 }
 
 impl HttpDshEffector {
-    /// Creates an HTTP effector targeting `<dsh_base_url>/api/runlark/dispatch`.
+    /// Creates an unauthenticated HTTP effector targeting `<dsh_base_url>/api/runlark/dispatch`.
     ///
     /// # Panics
     /// Panics only if the TLS/HTTP client backend cannot be initialized.
     #[must_use]
     pub fn new(dsh_base_url: &str) -> Self {
-        let trimmed = dsh_base_url.trim_end_matches('/');
+        Self::with_token(dsh_base_url, None)
+    }
+
+    /// Creates an HTTP effector targeting `<dsh_base_url>/api/runlark/dispatch` with an optional
+    /// DSH launch token used for `/connect` session cookie exchange and Bearer auth.
+    ///
+    /// # Panics
+    /// Panics only if the TLS/HTTP client backend cannot be initialized.
+    #[must_use]
+    pub fn with_token(dsh_base_url: &str, token: Option<String>) -> Self {
+        let origin = dsh_base_url.trim_end_matches('/').to_string();
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
+            .redirect(Policy::none())
             .build()
             .expect("reqwest HTTP client must build");
         Self {
             client,
-            endpoint: format!("{trimmed}/api/runlark/dispatch"),
+            endpoint: format!("{origin}/api/runlark/dispatch"),
+            origin,
+            token: token.filter(|t| !t.trim().is_empty()),
+            cookie: RwLock::new(None),
         }
+    }
+
+    async fn cached_or_fresh_cookie(&self) -> Option<String> {
+        let token = self.token.as_deref()?;
+        if let Some(existing) = self.cookie.read().await.clone() {
+            return Some(existing);
+        }
+        if let Ok(Some(fresh)) =
+            authenticate_dsh_cookie(&self.client, &self.origin, Some(token)).await
+        {
+            *self.cookie.write().await = Some(fresh.clone());
+            return Some(fresh);
+        }
+        None
+    }
+
+    async fn send_dispatch(
+        &self,
+        body: &HttpDispatchPayload<'_>,
+    ) -> Result<reqwest::Response, reqwest::Error> {
+        let cookie = self.cached_or_fresh_cookie().await;
+        let mut req = self
+            .client
+            .post(&self.endpoint)
+            .header(ORIGIN, &self.origin)
+            .json(body);
+        if let Some(ref c) = cookie {
+            req = req.header(COOKIE, c);
+        }
+        if let Some(ref tok) = self.token {
+            req = req.header(AUTHORIZATION, format!("Bearer {tok}"));
+        }
+        let resp = req.send().await?;
+
+        if self.token.is_some()
+            && matches!(
+                resp.status(),
+                StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+            )
+        {
+            *self.cookie.write().await = None;
+            let refreshed = self.cached_or_fresh_cookie().await;
+            let mut retry = self
+                .client
+                .post(&self.endpoint)
+                .header(ORIGIN, &self.origin)
+                .json(body);
+            if let Some(ref c) = refreshed {
+                retry = retry.header(COOKIE, c);
+            }
+            if let Some(ref tok) = self.token {
+                retry = retry.header(AUTHORIZATION, format!("Bearer {tok}"));
+            }
+            return retry.send().await;
+        }
+        Ok(resp)
     }
 }
 
@@ -131,7 +207,7 @@ impl OutboxEffector for HttpDshEffector {
                     .map(|p| p.to_string_lossy().into_owned()),
             };
 
-            match self.client.post(&self.endpoint).json(&body).send().await {
+            match self.send_dispatch(&body).await {
                 Ok(resp) if resp.status().is_success() => EffectOutcome::Acked,
                 Ok(resp)
                     if matches!(

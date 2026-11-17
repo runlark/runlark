@@ -224,3 +224,69 @@ async fn test_events_long_poll_breaks_immediately_on_broadcast_lag() {
     state.signal_shutdown();
     handle.abort();
 }
+
+#[test]
+fn test_wire_event_without_run_does_not_advance_cursor() {
+    let temp = TempDir::new().expect("temp dir");
+    let db_path = temp.path().join("cursor_no_run.db");
+    let mut conn = open_sqlite(&db_path).expect("open db");
+    initialize_schema(&conn).expect("init schema");
+    let state = AppState::new(db_path);
+
+    let sid = SessionId::from("sess_pre_run");
+    SessionStore::create_session(
+        &conn,
+        &Session {
+            id: sid.clone(),
+            task_id: TaskId::from("task_pre"),
+            cwd: temp.path().display().to_string(),
+            status: SessionStatus::Created,
+            current_revision: Revision(1),
+            active_run_id: None,
+            created_at: Timestamp(1000),
+            updated_at: Timestamp(1000),
+        },
+    )
+    .expect("create session");
+
+    let wire = runlark_cli::DshWireEvent {
+        event_type: "assistant/message".to_string(),
+        seq: 5,
+        time: 1100,
+        data: json!({ "content": [{ "type": "text", "text": "early" }] }),
+    };
+
+    // Without any run, event emits nothing and MUST NOT advance cursor.
+    let early =
+        runlark_cli::process_dsh_wire_event(&mut conn, &state, &sid, None, &wire, Timestamp(1100))
+            .expect("early event");
+    assert!(early.is_empty());
+    assert_eq!(
+        runlark_local::DshCursorStore::get_cursor(&conn, &sid).expect("cursor"),
+        None
+    );
+
+    // Once a run exists, re-delivering seq 5 succeeds and advances cursor to 5.
+    LocalStore::apply_command(
+        &mut conn,
+        &SessionCommand::SendPrompt(SendPromptCommand {
+            command_id: CommandId::from("cmd_pre_run"),
+            session_id: sid.clone(),
+            run_id: RunId::from("run_pre"),
+            prompt: "Start".to_string(),
+            expected_revision: Revision(1),
+            created_at: Timestamp(1200),
+        }),
+        Timestamp(1200),
+    )
+    .expect("start run");
+
+    let redelivered =
+        runlark_cli::process_dsh_wire_event(&mut conn, &state, &sid, None, &wire, Timestamp(1300))
+            .expect("redelivered event");
+    assert_eq!(redelivered.len(), 1);
+    assert_eq!(
+        runlark_local::DshCursorStore::get_cursor(&conn, &sid).expect("cursor"),
+        Some(5)
+    );
+}

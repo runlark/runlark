@@ -112,7 +112,10 @@ pub async fn run_daemon_with_dsh(
     let effector: Arc<dyn OutboxEffector> = match &resolved_dsh {
         Some(endpoint) => {
             tracing::info!("Outbox configured with DSH bridge URL: {}", endpoint.origin);
-            Arc::new(HttpDshEffector::new(&endpoint.origin))
+            Arc::new(HttpDshEffector::with_token(
+                &endpoint.origin,
+                endpoint.token.clone(),
+            ))
         }
         None => Arc::new(LocalBridgeEffector),
     };

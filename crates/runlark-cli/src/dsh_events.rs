@@ -464,10 +464,12 @@ pub fn process_dsh_wire_event(
             }
             _ => {}
         }
-    }
 
-    if wire_event.seq > 0 {
-        let _ = DshCursorStore::advance_cursor(conn, session_id, wire_event.seq, now)?;
+        // Advance DSH cursor only once a run was resolved so pre-run events can be
+        // re-delivered rather than silently dropped.
+        if wire_event.seq > 0 {
+            let _ = DshCursorStore::advance_cursor(conn, session_id, wire_event.seq, now)?;
+        }
     }
 
     Ok(emitted)

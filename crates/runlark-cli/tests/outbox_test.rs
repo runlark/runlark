@@ -258,3 +258,71 @@ async fn test_http_dsh_effector_maps_200_500_and_504() {
         EffectOutcome::Unknown { .. }
     ));
 }
+
+#[tokio::test]
+async fn test_http_dsh_effector_authenticates_with_token_and_cookie() {
+    use axum::extract::Query;
+    use axum::http::{HeaderMap, header};
+    use axum::response::IntoResponse;
+    use axum::routing::get;
+    use std::collections::HashMap;
+
+    let app = Router::new()
+        .route(
+            "/connect",
+            get(|Query(params): Query<HashMap<String, String>>| async move {
+                if params.get("token").map(String::as_str) == Some("tok_secret") {
+                    (
+                        StatusCode::FOUND,
+                        [(header::SET_COOKIE, "dsh_session=sess_cookie_ok; Path=/")],
+                        "ok",
+                    )
+                        .into_response()
+                } else {
+                    StatusCode::UNAUTHORIZED.into_response()
+                }
+            }),
+        )
+        .route(
+            "/api/runlark/dispatch",
+            post(|headers: HeaderMap| async move {
+                let cookie = headers.get(header::COOKIE).and_then(|v| v.to_str().ok());
+                let auth = headers
+                    .get(header::AUTHORIZATION)
+                    .and_then(|v| v.to_str().ok());
+                if cookie == Some("dsh_session=sess_cookie_ok") && auth == Some("Bearer tok_secret")
+                {
+                    StatusCode::OK
+                } else {
+                    StatusCode::UNAUTHORIZED
+                }
+            }),
+        );
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let temp = TempDir::new().expect("temp");
+    let db_path = temp.path().join("http_auth.db");
+    seed_session_and_prompt(&db_path, temp.path(), "sess_http_auth", "run_http_auth");
+
+    let conn = open_sqlite(&db_path).expect("open db");
+    let cmd = CommandStore::get_command(&conn, &CommandId::from("cmd_run_http_auth"))
+        .expect("get cmd")
+        .expect("exists");
+    let parsed: SessionCommand = serde_json::from_str(&cmd.payload).expect("parse cmd");
+    let ctx = DispatchContext {
+        command: cmd,
+        parsed,
+        worktree_path: Some(temp.path().to_path_buf()),
+    };
+
+    let effector =
+        HttpDshEffector::with_token(&format!("http://{addr}"), Some("tok_secret".to_string()));
+    assert_eq!(effector.execute(&ctx).await, EffectOutcome::Acked);
+}

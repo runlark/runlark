@@ -226,6 +226,9 @@ fn handle_resume_session(
     })
 }
 
+// Note: pure `transition()` checks run status (`WaitingForApproval`) and `expected_revision`;
+// `question_id` existence, ownership (`session_id`/`run_id`), and `Pending` status are enforced
+// atomically in `CommandStore::persist_command_and_transition` via `QuestionStore`.
 fn handle_answer_question(
     session: &Session,
     active_run: Option<&Run>,

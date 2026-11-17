@@ -422,3 +422,54 @@ fn test_question_store_lifecycle_and_turn_end_cancellation() {
             .is_empty()
     );
 }
+
+#[test]
+fn test_answer_question_rejects_unknown_question_id_and_preserves_waiting_state() {
+    let mut conn = open_in_memory().expect("open memory db");
+    initialize_schema(&conn).expect("init schema");
+    let session = seed_session(&conn, "sess_q_missing");
+
+    LocalStore::apply_command(
+        &mut conn,
+        &SessionCommand::SendPrompt(SendPromptCommand {
+            command_id: CommandId::from("cmd_qm_start"),
+            session_id: session.id.clone(),
+            run_id: RunId::from("run_qm"),
+            prompt: "Ask".to_string(),
+            expected_revision: Revision(1),
+            created_at: Timestamp(1000),
+        }),
+        Timestamp(1000),
+    )
+    .expect("start");
+
+    let asked = LocalStore::record_user_question(
+        &mut conn,
+        &session.id,
+        &RunId::from("run_qm"),
+        &QuestionId::from("q_real"),
+        "Real question?",
+        &["yes".to_string()],
+        Timestamp(1100),
+    )
+    .expect("ask");
+
+    let wrong = LocalStore::answer_question(
+        &mut conn,
+        AnswerQuestionCommand {
+            command_id: CommandId::from("cmd_qm_wrong"),
+            session_id: session.id.clone(),
+            run_id: RunId::from("run_qm"),
+            question_id: QuestionId::from("q_nonexistent"),
+            answer: "yes".to_string(),
+            expected_revision: asked.session.current_revision,
+            created_at: Timestamp(1200),
+        },
+        Timestamp(1200),
+    );
+    assert!(matches!(wrong, Err(StorageError::QuestionNotFound(_))));
+    let run = SessionStore::get_run(&conn, &RunId::from("run_qm"))
+        .expect("get run")
+        .expect("exists");
+    assert_eq!(run.status, RunStatus::WaitingForApproval);
+}
