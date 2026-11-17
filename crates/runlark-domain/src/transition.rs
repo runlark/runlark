@@ -92,6 +92,9 @@ fn handle_stop_run(
             requested: cmd.run_id.clone(),
         });
     }
+    if run.status == RunStatus::CancelRequested {
+        return Err(TransitionError::RunCancelling);
+    }
     if is_terminal_run_status(run.status) {
         return Err(TransitionError::RunAlreadyTerminated);
     }
@@ -126,6 +129,9 @@ fn handle_resume_session(
     let Some(run) = active_run else {
         return Err(TransitionError::NoActiveRun);
     };
+    if run.status == RunStatus::CancelRequested {
+        return Err(TransitionError::RunCancelling);
+    }
     if run.status == RunStatus::CancelRequested {
         return Err(TransitionError::RunCancelling);
     }

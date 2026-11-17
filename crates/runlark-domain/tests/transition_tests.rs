@@ -93,6 +93,26 @@ fn test_stop_run_transitions_to_cancel_requested_not_stopped() {
         }
         other => panic!("expected RunCancelRequested, got {other:?}"),
     }
+
+    // A second StopRun while CancelRequested must fail with RunCancelling
+    let second_stop = SessionCommand::StopRun(StopRunCommand {
+        command_id: CommandId::from("cmd_stop_2"),
+        session_id: outcome.new_session.id.clone(),
+        run_id: RunId::from("run_1"),
+        reason: Some("Duplicate stop".to_string()),
+        expected_revision: outcome.new_session.current_revision,
+        created_at: Timestamp(3100),
+    });
+    assert_eq!(
+        transition(
+            &outcome.new_session,
+            Some(&run),
+            &second_stop,
+            Timestamp(3100)
+        )
+        .unwrap_err(),
+        TransitionError::RunCancelling
+    );
 }
 
 #[test]
