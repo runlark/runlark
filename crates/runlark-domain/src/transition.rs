@@ -132,9 +132,6 @@ fn handle_resume_session(
     if run.status == RunStatus::CancelRequested {
         return Err(TransitionError::RunCancelling);
     }
-    if run.status == RunStatus::CancelRequested {
-        return Err(TransitionError::RunCancelling);
-    }
     if is_terminal_run_status(run.status) {
         return Err(TransitionError::RunAlreadyTerminated);
     }
