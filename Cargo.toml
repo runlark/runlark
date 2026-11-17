@@ -1,0 +1,42 @@
+[workspace]
+resolver = "3"
+members = ["crates/runlark-domain", "crates/runlark-local", "crates/runlark-cli"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.94.1"
+license = "Apache-2.0"
+authors = ["Runlark Authors"]
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+wildcard_imports = "deny"
+
+[workspace.dependencies]
+runlark-domain = { path = "crates/runlark-domain", version = "0.1.0" }
+runlark-local = { path = "crates/runlark-local", version = "0.1.0" }
+runlark-cli = { path = "crates/runlark-cli", version = "0.1.0" }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+uuid = { version = "1.10", features = ["v4", "serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
+tokio = { version = "1.40", features = ["full"] }
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+clap = { version = "4.5", features = ["derive"] }
+tempfile = "3.12"
+reqwest = { version = "0.12", features = ["json"] }
+sha2 = "0.10"
+hex = "0.4"

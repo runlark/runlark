@@ -1,0 +1,76 @@
+version: 1
+strict: true
+
+exclude:
+  - "scripts/**"
+  - ".agents/**"
+  - "docs/**"
+  - "web/**"
+
+components:
+  runlark-domain:
+    in: crates/runlark-domain/**
+    because: "Pure domain logic, state machines, commands and events; zero external I/O or DB"
+
+  runlark-local:
+    in: crates/runlark-local/**
+    because: "SQLite persistence, transactional command outbox and restart reconciliation"
+
+  runlark-cli:
+    in: crates/runlark-cli/**
+    because: "CLI interface and local daemon process, managing session lifecycle and IPC/HTTP endpoints"
+
+  dsh-plugin:
+    in: packages/dsh-plugin/**
+    because: "DSH integration and host bridge adapter for browser/desktop DSH UI"
+
+layers:
+  - runlark-cli
+  - runlark-local
+  - runlark-domain
+
+rules:
+  runlark-domain:
+    forbid_external:
+      - name: tokio
+        because: "Domain is pure: no async runtime or network/disk I/O"
+      - name: rusqlite
+        because: "Domain is pure: no database dependencies"
+      - name: reqwest
+        because: "Domain is pure: no HTTP networking"
+
+  dsh-plugin:
+    may_depend_on: []
+    because: "DSH plugin interacts with Runlark daemon via IPC/HTTP, not direct code imports"
+
+examples:
+  - from: crates/runlark-domain/src/lib.rs
+    to: crates/runlark-local/src/lib.rs
+    expect: rejected
+  - from: crates/runlark-domain/src/lib.rs
+    to: crates/runlark-cli/src/lib.rs
+    expect: rejected
+  - from: crates/runlark-local/src/lib.rs
+    to: crates/runlark-cli/src/lib.rs
+    expect: rejected
+  - from: packages/dsh-plugin/src/index.ts
+    to: crates/runlark-domain/src/lib.rs
+    expect: rejected
+  - from: packages/dsh-plugin/src/index.ts
+    to: crates/runlark-local/src/lib.rs
+    expect: rejected
+  - from: packages/dsh-plugin/src/index.ts
+    to: crates/runlark-cli/src/lib.rs
+    expect: rejected
+  - from: crates/runlark-cli/src/lib.rs
+    to: packages/dsh-plugin/src/index.ts
+    expect: rejected
+  - from: crates/runlark-local/src/lib.rs
+    to: crates/runlark-domain/src/lib.rs
+    expect: allowed
+  - from: crates/runlark-cli/src/lib.rs
+    to: crates/runlark-local/src/lib.rs
+    expect: allowed
+  - from: crates/runlark-cli/src/lib.rs
+    to: crates/runlark-domain/src/lib.rs
+    expect: allowed

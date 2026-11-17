@@ -33,14 +33,30 @@ test("documentation, tooling and preserved vendor guidance pass", () => {
     assert.equal(result.status, 0, result.stderr);
 });
 
+test("integrated languages (Rust, TypeScript, SQL) pass scope check", () => {
+    const result = check([
+        "crates/runlark-domain/src/lib.rs",
+        "Cargo.toml",
+        "packages/dsh-plugin/src/index.ts",
+        "crates/runlark-local/migrations/0001_initial.sql",
+    ]);
+
+    assert.equal(result.status, 0, result.stderr);
+});
+
 for (const file of [
-    "crates/core/src/lib.rs",
-    "Cargo.toml",
     "web/src/app.tsx",
-    "plugin/main.ts",
-    "schema/001.sql",
-    "plugins/result.wit",
+    "web/tool.js",
+    "bin/build.sh",
     "images/check/Dockerfile",
+    "plugins/result.wit",
+    "bin/sample.wasm",
+    "models/spec.lean",
+    "services/backend.go",
+    "scripts/deploy.py",
+    "spec/api.tsp",
+    "web/styles.css",
+    "web/index.html",
 ]) {
     test(`unintegrated product source is refused: ${file}`, () => {
         const result = check(["README.md", file]);

@@ -11,6 +11,7 @@ fmt:
     npm run format
     taplo fmt
     shfmt -w -i 4 scripts .githooks
+    cargo fmt --all
     just --fmt --unstable
 
 # Every source language needs its real compiler, architecture and behavior gates first.
@@ -19,6 +20,18 @@ lint-scope:
 
 lint-size:
     node scripts/file-limit.mjs
+
+lint-arch:
+    easement check --require-evidence
+
+lint-rust:
+    cargo fmt --all --check
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
+    cargo machete
+    cargo deny check
+
+lint-ts:
+    cd packages/dsh-plugin && npx tsc --noEmit
 
 lint-files:
     npm run format:check
@@ -43,14 +56,25 @@ security:
     npm run audit
     gitleaks dir . --redact --no-banner
 
-lint: lint-scope lint-size lint-files lint-skills security
+lint: lint-scope lint-size lint-arch lint-rust lint-ts lint-files lint-skills security
 
 # Observable guard behavior against isolated real Git repositories.
 test:
     node --test scripts/*.test.mjs
+    node --experimental-strip-types --test packages/dsh-plugin/test/*.test.ts
+    cargo test --workspace --all-targets --all-features
 
-# The same complete bootstrap gate runs locally, in pre-push and in CI.
-check: lint test
+docs:
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
+
+smoke:
+    node scripts/smoke.mjs
+
+# The same complete gate runs locally, in pre-push and in CI.
+check: lint test docs smoke
+
+style-fix:
+    cargo fmt --all
 
 review *args="":
     scripts/wait-sych "$@"

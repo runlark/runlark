@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Зафиксирован DSH spike (`deepseek-ai/deepseek-harness`, `dsh-v0.2.2-rc.3`) и спецификация перехватчика команд (`docs/dsh-spike.md`).
+- Подключены архитектурные границы `easement.yml` (`--require-evidence`), реальные Rust/TS/SQLite/process-smoke гейты и вертикальный срез A0 (`runlark-domain`, `runlark-local`, `runlark-cli`, `packages/dsh-plugin`).
 - Для организации runlark настроен отдельный приватный Sych App; current-head waiter ожидает `runlark-sych-reviewer[bot]`.
 - Новый репозиторий публичный; CI и ожидание Sych перенесены на GitHub-hosted `ubuntu-24.04`.
 - Git hook tests используют project-local mise pins и пустой global config на чистых hosted runners.

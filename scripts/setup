@@ -12,5 +12,6 @@ while IFS= read -r tool; do
     tools+=("${tool}")
 done <<<"${selected}"
 mise install "${tools[@]}"
+mise exec rust -- rustup component add rustfmt clippy rust-analyzer
 mise exec -- npm ci
 git config --local core.hooksPath .githooks

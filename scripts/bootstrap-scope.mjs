@@ -15,8 +15,8 @@ const forbidden = files.filter((file) => {
     }
 
     return (
-        /(?:^|\/)(?:Cargo\.toml|Dockerfile|tsconfig[^/]*\.json)$/.test(file) ||
-        /\.(?:rs|[cm]?[jt]sx?|css|scss|html|wasm|wit|sql|py|go|sh|bash|lean|tsp)$/.test(file)
+        /(?:^|\/)(?:Dockerfile)$/.test(file) ||
+        /\.(?:[cm]?js|[jt]sx|sh|bash|wasm|wit|py|go|lean|tsp|css|scss|html)$/.test(file)
     );
 });
 

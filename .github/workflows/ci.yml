@@ -52,5 +52,6 @@ jobs:
           path: |
             .reports/outcomes.json
             .reports/sych-ci.json
+            .reports/clippy.json
           if-no-files-found: error
           retention-days: 7
