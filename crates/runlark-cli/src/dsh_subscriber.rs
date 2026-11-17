@@ -441,33 +441,58 @@ impl DshSubscriber {
                     event.event_type,
                     session_id
                 );
-            } else if event.event_type == "turn/end"
-                && let Ok(Some(sess)) = SessionStore::get_session(&conn, session_id)
-                && let Some(run_id) = sess.active_run_id
-                && let Ok(Some(run)) = SessionStore::get_run(&conn, &run_id)
-                && run.task_id.is_some()
-                && !run.status.is_terminal()
-            {
-                while let Some(res) = pipeline_tasks.try_join_next() {
-                    log_pipeline_join_result(res);
-                }
-                let state = self.state.clone();
-                pipeline_tasks.spawn(async move {
-                    if let Err(err) = crate::repair::WorkflowPipeline::on_dsh_turn_ended(
-                        &state,
-                        &run_id,
-                        Timestamp(AppState::current_timestamp_ms()),
-                    )
-                    .await
-                    {
-                        tracing::warn!(
-                            "workflow pipeline failed on subscriber turn/end for {}: {err}",
-                            run_id
-                        );
-                    }
-                });
+            } else if event.event_type == "turn/end" {
+                self.spawn_turn_end_pipeline(&conn, session_id, pipeline_tasks);
             }
         }
+    }
+
+    fn spawn_turn_end_pipeline(
+        &self,
+        conn: &runlark_local::Connection,
+        session_id: &SessionId,
+        pipeline_tasks: &mut tokio::task::JoinSet<()>,
+    ) {
+        let sess = match SessionStore::get_session(conn, session_id) {
+            Ok(Some(s)) => s,
+            Ok(None) => return,
+            Err(err) => {
+                tracing::warn!("Failed to load session {session_id} on turn/end: {err}");
+                return;
+            }
+        };
+        let Some(run_id) = sess.active_run_id else {
+            return;
+        };
+        let run = match SessionStore::get_run(conn, &run_id) {
+            Ok(Some(r)) => r,
+            Ok(None) => return,
+            Err(err) => {
+                tracing::warn!("Failed to load run {run_id} on turn/end: {err}");
+                return;
+            }
+        };
+        if run.task_id.is_none() || run.status.is_terminal() {
+            return;
+        }
+        while let Some(res) = pipeline_tasks.try_join_next() {
+            log_pipeline_join_result(res);
+        }
+        let state = self.state.clone();
+        pipeline_tasks.spawn(async move {
+            if let Err(err) = crate::repair::WorkflowPipeline::on_dsh_turn_ended(
+                &state,
+                &run_id,
+                Timestamp(AppState::current_timestamp_ms()),
+            )
+            .await
+            {
+                tracing::warn!(
+                    "workflow pipeline failed on subscriber turn/end for {}: {err}",
+                    run_id
+                );
+            }
+        });
     }
 }
 
