@@ -108,8 +108,16 @@ impl Scheduler {
     /// # Errors
     /// Returns [`StorageError`] on database or worktree isolation failures.
     pub async fn admit_once(&self) -> Result<Vec<Run>, StorageError> {
+        self.admit_once_with_hook(|_| {}).await
+    }
+
+    async fn admit_once_with_hook<F>(&self, mut before_commit: F) -> Result<Vec<Run>, StorageError>
+    where
+        F: FnMut(&runlark_domain::RunId),
+    {
         let _admit_guard = self.state.scheduler_admit_lock.lock().await;
         let mut admitted = Vec::new();
+        let mut skipped = std::collections::HashSet::new();
 
         loop {
             let candidate = {
@@ -123,6 +131,9 @@ impl Scheduler {
                 let queued = BoardProjection::list_queued_runs_fifo(&conn)?;
                 let mut chosen: Option<(Run, PathBuf)> = None;
                 for run in queued {
+                    if skipped.contains(&run.id) {
+                        continue;
+                    }
                     if let Some(pid) = &run.project_id
                         && let Some(project) = ProjectStore::get_project(&conn, pid)?
                     {
@@ -163,9 +174,10 @@ impl Scheduler {
 
             let worktree_str = worktree_path.to_string_lossy().into_owned();
             let now = Timestamp(AppState::current_timestamp_ms());
+            before_commit(&run.id);
 
             let mut conn = open_sqlite(&self.state.db_path)?;
-            match RunQueries::admit_queued_run(
+            if let Some(admitted_run) = RunQueries::admit_queued_run(
                 &mut conn,
                 &run.id,
                 &worktree_str,
@@ -173,12 +185,16 @@ impl Scheduler {
                 self.max_slots,
                 now,
             )? {
-                Some(admitted_run) => {
-                    self.state.notify_outbox();
-                    self.state.notify_dsh_subscriber();
-                    admitted.push(admitted_run);
+                self.state.notify_outbox();
+                self.state.notify_dsh_subscriber();
+                admitted.push(admitted_run);
+            } else {
+                let used =
+                    u64::try_from(RunQueries::list_executing_runs(&conn)?.len()).unwrap_or(0);
+                if used >= self.max_slots {
+                    break;
                 }
-                None => break,
+                skipped.insert(run.id);
             }
         }
 
@@ -198,4 +214,116 @@ fn resolve_head_sha(dir: &Path) -> Option<String> {
     }
     let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (!sha.is_empty()).then_some(sha)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use runlark_domain::{
+        BudgetPolicy, CostSummary, Revision, RunId, RunStatus, Session, SessionId, SessionStatus,
+        TaskId, TaskKind, WorkflowStage,
+    };
+    use runlark_local::initialize_schema;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn admit_once_continues_after_single_run_loses_queued_status() {
+        let temp = TempDir::new().expect("temp dir");
+        let repo = temp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("mkdir");
+        for args in [
+            vec!["init"],
+            vec!["config", "user.email", "t@runlark.dev"],
+            vec!["config", "user.name", "Test"],
+        ] {
+            assert!(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&repo)
+                    .args(&args)
+                    .output()
+                    .expect("git")
+                    .status
+                    .success()
+            );
+        }
+        std::fs::write(repo.join("README.md"), "# R\n").expect("write");
+        for args in [vec!["add", "README.md"], vec!["commit", "-m", "init"]] {
+            assert!(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&repo)
+                    .args(&args)
+                    .output()
+                    .expect("git")
+                    .status
+                    .success()
+            );
+        }
+
+        let db_path = temp.path().join("sched_unit.db");
+        let conn = open_sqlite(&db_path).expect("open");
+        initialize_schema(&conn).expect("schema");
+        let repo_str = repo.to_string_lossy().into_owned();
+        for n in 1..=2 {
+            let sid = SessionId::from(format!("sess_u_{n}"));
+            let rid = RunId::from(format!("run_u_{n}"));
+            SessionStore::create_session(
+                &conn,
+                &Session {
+                    id: sid.clone(),
+                    task_id: TaskId::from(format!("task_u_{n}")),
+                    cwd: repo_str.clone(),
+                    status: SessionStatus::Active,
+                    current_revision: Revision(1),
+                    active_run_id: Some(rid.clone()),
+                    created_at: Timestamp(n * 10),
+                    updated_at: Timestamp(n * 10),
+                },
+            )
+            .expect("session");
+            let run = Run {
+                id: rid,
+                session_id: sid,
+                status: RunStatus::Queued,
+                worktree_path: String::new(),
+                revision: Revision(1),
+                created_at: Timestamp(n * 10),
+                updated_at: Timestamp(n * 10),
+                task_id: None,
+                project_id: None,
+                workflow_stage: WorkflowStage::default(),
+                task_kind: TaskKind::default(),
+                workflow_digest: None,
+                base_sha: None,
+                head_sha: None,
+                plan_version: 1,
+                policy_digest: None,
+                budget_policy: BudgetPolicy::default(),
+                cost_summary: CostSummary::default(),
+                repair_attempts: 0,
+                pr_url: None,
+            };
+            SessionStore::save_run(&conn, &run).expect("run");
+        }
+        drop(conn);
+
+        let scheduler = Scheduler::new(AppState::new(db_path.clone()));
+        let admitted = scheduler
+            .admit_once_with_hook(|rid| {
+                if rid.0 == "run_u_1" {
+                    let c = open_sqlite(&db_path).expect("open hook");
+                    c.execute(
+                        "UPDATE runs SET status = 'stopped' WHERE run_id = 'run_u_1'",
+                        [],
+                    )
+                    .expect("stop run_u_1 before commit");
+                }
+            })
+            .await
+            .expect("admit_once");
+
+        assert_eq!(admitted.len(), 1);
+        assert_eq!(admitted[0].id.0, "run_u_2");
+    }
 }

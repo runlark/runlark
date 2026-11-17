@@ -159,19 +159,24 @@ impl DshSubscriber {
         }
     }
 
-    /// Runs the resilient DSH WebSocket subscription loop until `shutdown` signals `true`.
+    /// Runs the resilient DSH WebSocket subscription loop until `shutdown` signals `true`,
+    /// draining owned workflow pipeline tasks before exiting.
     pub async fn run_loop(
         self,
         notify: std::sync::Arc<Notify>,
         mut shutdown: watch::Receiver<bool>,
     ) {
+        let mut pipeline_tasks = tokio::task::JoinSet::new();
         let mut backoff = Duration::from_millis(250);
         loop {
             if *shutdown.borrow() {
                 break;
             }
 
-            match self.run_connection(&notify, &mut shutdown).await {
+            match self
+                .run_connection(&notify, &mut shutdown, &mut pipeline_tasks)
+                .await
+            {
                 Ok(()) => break,
                 Err(err) => {
                     tracing::debug!(
@@ -179,6 +184,7 @@ impl DshSubscriber {
                     );
                     tokio::select! {
                         () = tokio::time::sleep(backoff) => {}
+                        Some(_) = pipeline_tasks.join_next(), if !pipeline_tasks.is_empty() => {}
                         changed = shutdown.changed() => {
                             if changed.is_err() || *shutdown.borrow() {
                                 break;
@@ -189,6 +195,7 @@ impl DshSubscriber {
                 }
             }
         }
+        drain_pipeline_tasks(&mut pipeline_tasks).await;
     }
 
     async fn authenticate_cookie(&self) -> Result<Option<String>, String> {
@@ -204,6 +211,7 @@ impl DshSubscriber {
         &self,
         notify: &Notify,
         shutdown: &mut watch::Receiver<bool>,
+        pipeline_tasks: &mut tokio::task::JoinSet<()>,
     ) -> Result<(), String> {
         let cookie = self.authenticate_cookie().await?;
         let mut request = self
@@ -276,6 +284,7 @@ impl DshSubscriber {
                         return Ok(());
                     }
                 }
+                Some(_) = pipeline_tasks.join_next(), if !pipeline_tasks.is_empty() => {}
                 frame = read.next() => {
                     match frame {
                         Some(Ok(Message::Text(text))) => {
@@ -283,6 +292,7 @@ impl DshSubscriber {
                                 &text,
                                 &mut active_streams,
                                 &mut subscribed_sessions,
+                                pipeline_tasks,
                             );
                         }
                         Some(Ok(Message::Ping(payload))) => {
@@ -362,6 +372,7 @@ impl DshSubscriber {
         text: &str,
         active_streams: &mut HashMap<String, SessionId>,
         subscribed_sessions: &mut HashMap<SessionId, String>,
+        pipeline_tasks: &mut tokio::task::JoinSet<()>,
     ) {
         let Ok(msg) = serde_json::from_str::<MuxServerMessage>(text) else {
             return;
@@ -380,10 +391,11 @@ impl DshSubscriber {
                         self.apply_wire_batch(
                             &session_id,
                             records.iter().map(|record| &record.event),
+                            pipeline_tasks,
                         );
                     }
                     FollowFrame::Event { event } => {
-                        self.apply_wire_batch(&session_id, std::iter::once(&event));
+                        self.apply_wire_batch(&session_id, std::iter::once(&event), pipeline_tasks);
                     }
                     FollowFrame::AssistantStream {} => {}
                 }
@@ -406,6 +418,7 @@ impl DshSubscriber {
         &self,
         session_id: &SessionId,
         events: impl IntoIterator<Item = &'a DshWireEvent>,
+        pipeline_tasks: &mut tokio::task::JoinSet<()>,
     ) {
         let mut conn = match open_sqlite(&self.state.db_path) {
             Ok(conn) => conn,
@@ -431,8 +444,9 @@ impl DshSubscriber {
                 && run.task_id.is_some()
                 && !run.status.is_terminal()
             {
+                while pipeline_tasks.try_join_next().is_some() {}
                 let state = self.state.clone();
-                tokio::spawn(async move {
+                pipeline_tasks.spawn(async move {
                     if let Err(err) = crate::repair::WorkflowPipeline::on_dsh_turn_ended(
                         &state,
                         &run_id,
@@ -448,5 +462,23 @@ impl DshSubscriber {
                 });
             }
         }
+    }
+}
+
+async fn drain_pipeline_tasks(tasks: &mut tokio::task::JoinSet<()>) {
+    let drain = async {
+        while let Some(res) = tasks.join_next().await {
+            if let Err(err) = res
+                && !err.is_cancelled()
+            {
+                tracing::warn!("workflow pipeline task join error: {err}");
+            }
+        }
+    };
+    if tokio::time::timeout(Duration::from_secs(2), drain)
+        .await
+        .is_err()
+    {
+        tasks.shutdown().await;
     }
 }

@@ -221,6 +221,11 @@ pub(super) async fn exec_approve_plan(
     task_id: &TaskId,
     comment: Option<String>,
 ) -> Result<(StatusCode, ChatDispatchResponse), ApiError> {
+    let trimmed_comment = comment
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
     let plan_text = {
         let conn = state.get_connection().map_err(|e| {
             api_error(
@@ -238,9 +243,14 @@ pub(super) async fn exec_approve_plan(
                     format!("Task not found: {task_id}"),
                 )
             })?;
-        task.plan_text
-            .or(comment)
-            .unwrap_or_else(|| format!("Approved plan for {}", task.title))
+        match (task.plan_text, trimmed_comment.as_deref()) {
+            (Some(existing), Some(note)) => {
+                format!("{}\n\nApproval note: {note}", existing.trim_end())
+            }
+            (Some(existing), None) => existing,
+            (None, Some(note)) => note.to_string(),
+            (None, None) => format!("Approved plan for {}", task.title),
+        }
     };
     let Json(updated) = plan_task(
         State(state.clone()),
@@ -253,14 +263,21 @@ pub(super) async fn exec_approve_plan(
         }),
     )
     .await?;
+    let summary = match trimmed_comment {
+        Some(note) => format!(
+            "Approved plan for {} (v{}; note: {note})",
+            updated.id, updated.plan_version
+        ),
+        None => format!(
+            "Approved plan for {} (v{})",
+            updated.id, updated.plan_version
+        ),
+    };
     Ok((
         StatusCode::OK,
         ChatDispatchResponse {
             command: "plan_approve".to_string(),
-            summary: format!(
-                "Approved plan for {} (v{})",
-                updated.id, updated.plan_version
-            ),
+            summary,
             data: serde_json::to_value(&updated).unwrap_or(Value::Null),
         },
     ))

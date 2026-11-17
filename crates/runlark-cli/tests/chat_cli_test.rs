@@ -152,6 +152,26 @@ async fn unified_chat_dispatch_board_history_and_cli_commands_work_end_to_end() 
     assert_eq!(plan_res["command"], "plan");
     assert_eq!(plan_res["data"]["plan_version"], 2);
 
+    let approve_res = post_chat(
+        &client,
+        &base,
+        &format!("/plan approve {task_id} Looks solid"),
+        None,
+    )
+    .await;
+    assert_eq!(approve_res["command"], "plan_approve");
+    assert!(
+        approve_res["summary"]
+            .as_str()
+            .expect("summary")
+            .contains("Looks solid")
+    );
+    let approved_plan_text = approve_res["data"]["plan_text"]
+        .as_str()
+        .expect("plan_text");
+    assert!(approved_plan_text.contains("Validate redirect URI"));
+    assert!(approved_plan_text.contains("Looks solid"));
+
     let run_res = post_chat(
         &client,
         &base,

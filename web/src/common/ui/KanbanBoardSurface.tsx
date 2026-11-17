@@ -44,6 +44,19 @@ export function KanbanBoardSurface({
     return () => mq.removeEventListener("change", sync);
   }, []);
 
+  useEffect(() => {
+    if (!draggingTaskId || typeof window === "undefined") {
+      return undefined;
+    }
+    const clearDrag = (): void => setDraggingTaskId(null);
+    window.addEventListener("dragend", clearDrag);
+    window.addEventListener("drop", clearDrag);
+    return () => {
+      window.removeEventListener("dragend", clearDrag);
+      window.removeEventListener("drop", clearDrag);
+    };
+  }, [draggingTaskId]);
+
   const allEntries = TASK_STAGES.flatMap((stage) => columns[stage]);
   const draggedEntry = draggingTaskId
     ? allEntries.find((e) => e.task.id === draggingTaskId)

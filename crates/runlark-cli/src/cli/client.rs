@@ -96,7 +96,7 @@ impl DaemonHttpClient {
         })?;
         let status = resp.status();
         let text = resp.text().await.map_err(|err| CliHttpError {
-            status: Some(status),
+            status: (!status.is_success()).then_some(status),
             message: format!("failed to read response body: {err}"),
         })?;
 
@@ -115,7 +115,7 @@ impl DaemonHttpClient {
             return Ok(Value::Null);
         }
         serde_json::from_str(&text).map_err(|err| CliHttpError {
-            status: Some(status),
+            status: None,
             message: format!("invalid JSON from daemon: {err}"),
         })
     }
@@ -136,4 +136,35 @@ pub fn print_output(
         println!("{}", human_summary(value));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn non_json_200_response_omits_http_status_code_from_error() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf = [0u8; 512];
+                let _ = stream.read(&mut buf).await;
+                let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\nnot-json";
+                let _ = stream.write_all(resp.as_bytes()).await;
+            }
+        });
+
+        let client = DaemonHttpClient::new(&format!("http://{addr}"));
+        let err = client
+            .get_json("/health")
+            .await
+            .expect_err("invalid JSON should fail");
+        assert_eq!(err.status, None);
+        let formatted = err.to_string();
+        assert!(formatted.starts_with("invalid JSON from daemon:"));
+        assert!(!formatted.contains("(200)"));
+    }
 }
