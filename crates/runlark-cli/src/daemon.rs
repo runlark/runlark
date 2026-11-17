@@ -176,6 +176,10 @@ pub async fn run_daemon_with_dsh(
         None => Arc::new(LocalBridgeEffector),
     };
 
+    let addr = format!("{host}:{port}");
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    tracing::info!("Runlark daemon listening on http://{}", addr);
+
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let dispatcher = Arc::new(OutboxDispatcher::new(
         db_path,
@@ -199,10 +203,6 @@ pub async fn run_daemon_with_dsh(
         });
 
     let app = build_router(state.clone());
-
-    let addr = format!("{host}:{port}");
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
-    tracing::info!("Runlark daemon listening on http://{}", addr);
 
     let shutdown_state = state.clone();
     let serve_result = axum::serve(listener, app)

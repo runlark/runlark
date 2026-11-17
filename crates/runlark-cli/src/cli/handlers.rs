@@ -136,7 +136,7 @@ pub async fn handle_task(
             let val = client.get_json(&format!("/api/v1/tasks/{id}")).await?;
             print_output(&val, json_mode, |v| {
                 format!(
-                    "Task {} [{}] stage={} known_cost={} unknown_attempts={}",
+                    "Task {} [{}] workflow_stage={} known_cost={} unknown_attempts={}",
                     v["task"]["id"].as_str().unwrap_or(""),
                     v["task"]["stage"].as_str().unwrap_or(""),
                     v["task"]["workflow_stage"].as_str().unwrap_or(""),
