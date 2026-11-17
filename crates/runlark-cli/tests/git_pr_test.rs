@@ -345,3 +345,36 @@ async fn pr_creation_handles_unknown_outcome_and_idempotent_replay() {
 
     server.abort();
 }
+
+#[tokio::test]
+async fn compute_worktree_diff_validates_base_handles_binary_untracked_and_timeout_kills() {
+    let temp = TempDir::new().expect("tempdir");
+    init_git_repo(temp.path());
+
+    // 1. Unresolvable base_sha_hint must error explicitly instead of falling back to HEAD
+    let err = runlark_cli::git_pr::compute_worktree_diff(temp.path(), Some("nonexistent-ref"));
+    assert!(err.is_err(), "invalid base_sha_hint must fail");
+
+    // 2. Untracked binary bytes excluded consistently while text file emits proper unified hunk
+    fs::write(temp.path().join("bin.dat"), [0_u8, 159, 146, 150]).expect("write bin");
+    fs::write(temp.path().join("note with space.txt"), "line1\nline2\n").expect("write txt");
+    let snap = runlark_cli::git_pr::compute_worktree_diff(temp.path(), None).expect("diff snap");
+    assert!(!snap.changed_files.contains(&"bin.dat".to_string()));
+    assert!(
+        snap.changed_files
+            .contains(&"note with space.txt".to_string())
+    );
+    assert!(snap.diff_text.contains("diff --git a/note with space.txt"));
+    assert!(snap.diff_text.contains("@@ -0,0 +1,2 @@"));
+
+    // 3. SystemPrRunner timeout returns Unknown quickly and drops/kills child process
+    let runner = runlark_cli::SystemPrRunner {
+        timeout: std::time::Duration::from_millis(80),
+    };
+    let started = std::time::Instant::now();
+    let timeout_res = runner
+        .run_git(temp.path(), &["-c", "alias.hang=!sleep 5", "hang"])
+        .await;
+    assert!(matches!(timeout_res, Err(PrCommandError::Unknown(_))));
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+}

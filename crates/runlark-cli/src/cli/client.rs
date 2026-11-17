@@ -44,7 +44,20 @@ impl DaemonHttpClient {
     /// # Errors
     /// Returns [`CliHttpError`] on transport, status, or JSON decoding errors.
     pub async fn get_json(&self, path: &str) -> Result<Value, CliHttpError> {
-        self.request_json(Method::GET, path, Option::<&Value>::None)
+        self.request_json(Method::GET, path, None, Option::<&Value>::None)
+            .await
+    }
+
+    /// Performs a `GET` request with percent-encoded query parameters returning parsed JSON.
+    ///
+    /// # Errors
+    /// Returns [`CliHttpError`] on transport, status, or JSON decoding errors.
+    pub async fn get_json_query(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<Value, CliHttpError> {
+        self.request_json(Method::GET, path, Some(query), Option::<&Value>::None)
             .await
     }
 
@@ -57,17 +70,23 @@ impl DaemonHttpClient {
         path: &str,
         body: Option<&T>,
     ) -> Result<Value, CliHttpError> {
-        self.request_json(Method::POST, path, body).await
+        self.request_json(Method::POST, path, None, body).await
     }
 
     async fn request_json<T: Serialize>(
         &self,
         method: Method,
         path: &str,
+        query: Option<&[(&str, String)]>,
         body: Option<&T>,
     ) -> Result<Value, CliHttpError> {
         let url = format!("{}{path}", self.base_url);
         let mut req = self.http.request(method, &url);
+        if let Some(params) = query
+            && !params.is_empty()
+        {
+            req = req.query(params);
+        }
         if let Some(payload) = body {
             req = req.json(payload);
         }

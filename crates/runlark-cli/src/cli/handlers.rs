@@ -26,10 +26,10 @@ pub async fn handle_project(
             max_duration_ms,
             max_spend_micro_usd,
         } => {
-            let resolved_root = repo_root.unwrap_or_else(|| {
-                std::env::current_dir()
-                    .map_or_else(|_| ".".to_string(), |p| p.display().to_string())
-            });
+            let resolved_root = match repo_root {
+                Some(root) => root,
+                None => std::env::current_dir()?.display().to_string(),
+            };
             let mut body = json!({
                 "name": name,
                 "repo_root": resolved_root,
@@ -237,17 +237,12 @@ async fn list_tasks_cmd(
 ) -> CliResult {
     let mut params = Vec::new();
     if let Some(pid) = project_id {
-        params.push(format!("project_id={pid}"));
+        params.push(("project_id", pid));
     }
     if let Some(st) = stage {
-        params.push(format!("stage={st}"));
+        params.push(("stage", st));
     }
-    let q = if params.is_empty() {
-        String::new()
-    } else {
-        format!("?{}", params.join("&"))
-    };
-    let val = client.get_json(&format!("/api/v1/tasks{q}")).await?;
+    let val = client.get_json_query("/api/v1/tasks", &params).await?;
     print_output(&val, json_mode, |v| {
         v.as_array().map_or_else(String::new, |arr| {
             if arr.is_empty() {

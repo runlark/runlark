@@ -105,6 +105,7 @@ impl SystemPrRunner {
             cmd.current_dir(cwd);
         }
         cmd.args(args);
+        cmd.kill_on_drop(true);
 
         let output = match tokio::time::timeout(self.timeout, cmd.output()).await {
             Ok(Ok(out)) => out,
@@ -218,20 +219,28 @@ pub fn compute_worktree_diff(
     let branch_name = git_stdout(worktree, &["rev-parse", "--abbrev-ref", "HEAD"])
         .unwrap_or_else(|_| "HEAD".to_string());
 
-    let base_sha = match base_sha_hint.filter(|s| !s.trim().is_empty()) {
-        Some(hint) if git_stdout(worktree, &["rev-parse", "--verify", hint]).is_ok() => {
-            hint.to_string()
-        }
-        _ => head_sha.clone(),
+    let base_sha = match base_sha_hint.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(hint) => git_stdout(worktree, &["rev-parse", "--verify", hint])?,
+        None => head_sha.clone(),
     };
 
     let diff_out = git_stdout(worktree, &["diff", &base_sha])?;
     let tracked_changed = git_stdout(worktree, &["diff", "--name-only", &base_sha])?;
-    let untracked =
-        git_stdout(worktree, &["ls-files", "--others", "--exclude-standard"]).unwrap_or_default();
+    let untracked = git_stdout(
+        worktree,
+        &[
+            "-c",
+            "core.quotePath=false",
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "-z",
+        ],
+    )
+    .unwrap_or_default();
 
     let mut files = BTreeSet::new();
-    for line in tracked_changed.lines().chain(untracked.lines()) {
+    for line in tracked_changed.lines() {
         let trimmed = line.trim();
         if !trimmed.is_empty() {
             files.insert(trimmed.to_string());
@@ -239,18 +248,30 @@ pub fn compute_worktree_diff(
     }
 
     let mut diff_text = diff_out;
-    if !untracked.trim().is_empty() {
-        for path in untracked.lines().map(str::trim).filter(|s| !s.is_empty()) {
-            if let Ok(content) = std::fs::read_to_string(worktree.join(path)) {
-                if !diff_text.is_empty() && !diff_text.ends_with('\n') {
-                    diff_text.push('\n');
-                }
-                let _ = writeln!(diff_text, "--- /dev/null\n+++ b/{path}");
-                for line in content.lines() {
-                    diff_text.push('+');
-                    diff_text.push_str(line);
-                    diff_text.push('\n');
-                }
+    for path in untracked
+        .split('\0')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if let Ok(content) = std::fs::read_to_string(worktree.join(path)) {
+            files.insert(path.to_string());
+            if !diff_text.is_empty() && !diff_text.ends_with('\n') {
+                diff_text.push('\n');
+            }
+            let line_count = content.lines().count();
+            let hunk_header = if line_count == 0 {
+                "@@ -0,0 +0,0 @@".to_string()
+            } else {
+                format!("@@ -0,0 +1,{line_count} @@")
+            };
+            let _ = writeln!(
+                diff_text,
+                "diff --git a/{path} b/{path}\nnew file mode 100644\n--- /dev/null\n+++ b/{path}\n{hunk_header}"
+            );
+            for line in content.lines() {
+                diff_text.push('+');
+                diff_text.push_str(line);
+                diff_text.push('\n');
             }
         }
     }

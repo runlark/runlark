@@ -40,11 +40,11 @@ pub(super) async fn handle_task_board(
     project_id: Option<String>,
     json_mode: bool,
 ) -> CliResult {
-    let path = project_id.map_or_else(
-        || "/api/v1/board".to_string(),
-        |pid| format!("/api/v1/board?project_id={pid}"),
-    );
-    let val = client.get_json(&path).await?;
+    let params: Vec<(&str, String)> = project_id
+        .into_iter()
+        .map(|pid| ("project_id", pid))
+        .collect();
+    let val = client.get_json_query("/api/v1/board", &params).await?;
     print_output(&val, json_mode, |v| {
         format!(
             "Board: {} tasks | slots {}/{} | queued={} | known_cost={} unknown_attempts={}",
@@ -83,9 +83,12 @@ pub async fn handle_run(
             })
         }
         RunAction::Events { id, after_seq } => {
-            let q = after_seq.map_or_else(String::new, |s| format!("?after_seq={s}"));
+            let params: Vec<(&str, String)> = after_seq
+                .into_iter()
+                .map(|s| ("after_seq", s.to_string()))
+                .collect();
             let val = client
-                .get_json(&format!("/api/v1/runs/{id}/events{q}"))
+                .get_json_query(&format!("/api/v1/runs/{id}/events"), &params)
                 .await?;
             print_output(&val, json_mode, format_run_events)
         }
@@ -147,17 +150,12 @@ async fn list_runs_cmd(
 ) -> CliResult {
     let mut params = Vec::new();
     if let Some(tid) = task_id {
-        params.push(format!("task_id={tid}"));
+        params.push(("task_id", tid));
     }
     if let Some(st) = status {
-        params.push(format!("status={st}"));
+        params.push(("status", st));
     }
-    let q = if params.is_empty() {
-        String::new()
-    } else {
-        format!("?{}", params.join("&"))
-    };
-    let val = client.get_json(&format!("/api/v1/runs{q}")).await?;
+    let val = client.get_json_query("/api/v1/runs", &params).await?;
     print_output(&val, json_mode, |v| {
         v.as_array().map_or_else(String::new, |arr| {
             if arr.is_empty() {
@@ -207,17 +205,12 @@ pub async fn handle_question(
         QuestionAction::List { session_id, run_id } => {
             let mut params = Vec::new();
             if let Some(sid) = session_id {
-                params.push(format!("session_id={sid}"));
+                params.push(("session_id", sid));
             }
             if let Some(rid) = run_id {
-                params.push(format!("run_id={rid}"));
+                params.push(("run_id", rid));
             }
-            let q = if params.is_empty() {
-                String::new()
-            } else {
-                format!("?{}", params.join("&"))
-            };
-            let val = client.get_json(&format!("/api/v1/questions{q}")).await?;
+            let val = client.get_json_query("/api/v1/questions", &params).await?;
             print_output(&val, json_mode, |v| {
                 v.as_array().map_or_else(String::new, |arr| {
                     if arr.is_empty() {
