@@ -28,6 +28,7 @@ export class RunlarkSessionInterceptor implements SessionCommandInterceptor {
 
   unmanageSession(sessionId: string): void {
     this.managedSessions.delete(sessionId);
+    this.activeRunIds.delete(sessionId);
   }
 
   async prompt(

@@ -15,6 +15,13 @@ pub struct TransitionOutcome {
     pub events: Vec<DomainEvent>,
 }
 
+fn is_terminal_run_status(status: RunStatus) -> bool {
+    matches!(
+        status,
+        RunStatus::Stopped | RunStatus::Completed | RunStatus::Failed
+    )
+}
+
 fn handle_send_prompt(
     session: &Session,
     active_run: Option<&Run>,
@@ -25,12 +32,15 @@ fn handle_send_prompt(
         if run.status == RunStatus::CancelRequested {
             return Err(TransitionError::RunCancelling);
         }
-        if matches!(
-            run.status,
-            RunStatus::Stopped | RunStatus::Completed | RunStatus::Failed
-        ) && run.id == cmd.run_id
-        {
-            return Err(TransitionError::RunAlreadyTerminated);
+        if is_terminal_run_status(run.status) {
+            if run.id == cmd.run_id {
+                return Err(TransitionError::RunAlreadyTerminated);
+            }
+        } else if run.id != cmd.run_id {
+            return Err(TransitionError::ActiveRunMismatch {
+                active: run.id.clone(),
+                requested: cmd.run_id.clone(),
+            });
         }
     }
 
@@ -39,12 +49,7 @@ fn handle_send_prompt(
     next_session.updated_at = now;
 
     let mut run = active_run
-        .filter(|r| {
-            !matches!(
-                r.status,
-                RunStatus::Stopped | RunStatus::Completed | RunStatus::Failed
-            )
-        })
+        .filter(|r| !is_terminal_run_status(r.status))
         .cloned()
         .unwrap_or_else(|| Run {
             id: cmd.run_id.clone(),
@@ -81,10 +86,7 @@ fn handle_stop_run(
     let Some(run) = active_run else {
         return Err(TransitionError::NoActiveRun);
     };
-    if matches!(
-        run.status,
-        RunStatus::Stopped | RunStatus::Completed | RunStatus::Failed
-    ) {
+    if is_terminal_run_status(run.status) {
         return Err(TransitionError::RunAlreadyTerminated);
     }
 

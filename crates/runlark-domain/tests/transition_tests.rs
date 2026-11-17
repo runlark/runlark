@@ -284,4 +284,35 @@ fn test_session_mismatch_and_terminal_run_guards() {
         .unwrap_err(),
         TransitionError::RunAlreadyTerminated
     );
+
+    let running_run = Run {
+        id: RunId::from("run_active"),
+        session_id: session.id.clone(),
+        status: RunStatus::Running,
+        worktree_path: "/workspace".to_string(),
+        revision: Revision(1),
+        created_at: Timestamp(1000),
+        updated_at: Timestamp(1500),
+    };
+    let mismatched_run_cmd = SessionCommand::SendPrompt(SendPromptCommand {
+        command_id: CommandId::from("cmd_mismatch_run"),
+        session_id: session.id.clone(),
+        run_id: RunId::from("run_other"),
+        prompt: "Wrong active run".to_string(),
+        expected_revision: Revision(1),
+        created_at: Timestamp(2000),
+    });
+    assert_eq!(
+        transition(
+            &session,
+            Some(&running_run),
+            &mismatched_run_cmd,
+            Timestamp(2000)
+        )
+        .unwrap_err(),
+        TransitionError::ActiveRunMismatch {
+            active: RunId::from("run_active"),
+            requested: RunId::from("run_other"),
+        }
+    );
 }

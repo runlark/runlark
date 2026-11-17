@@ -1,4 +1,4 @@
-use crate::id::{Revision, SessionId};
+use crate::id::{Revision, RunId, SessionId};
 use thiserror::Error;
 
 /// Errors arising from invalid state transitions.
@@ -27,6 +27,9 @@ pub enum TransitionError {
 
     #[error("Run is currently cancelling")]
     RunCancelling,
+
+    #[error("Active run mismatch: active {active}, requested {requested}")]
+    ActiveRunMismatch { active: RunId, requested: RunId },
 
     #[error("Cannot change working directory while a run is active")]
     CwdConflictActiveRun,
