@@ -51,8 +51,14 @@ try {
     const deadline = Date.now() + 10_000;
 
     while (Date.now() < deadline) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
+            break;
+        }
         try {
-            const res = await fetch(healthUrl);
+            const res = await fetch(healthUrl, {
+                signal: AbortSignal.timeout(remaining),
+            });
             if (res.ok) {
                 const data = await res.json();
                 if (data.status === "ok" || data.status === "healthy") {

@@ -237,6 +237,14 @@ fn test_resume_session_recovers_interrupted_run() {
         transition(&session, None, &cmd, Timestamp(2100)).unwrap_err(),
         TransitionError::NoActiveRun
     );
+
+    // Resuming a terminal run must fail with RunAlreadyTerminated
+    let mut completed_run = interrupted_run;
+    completed_run.status = RunStatus::Completed;
+    assert_eq!(
+        transition(&session, Some(&completed_run), &cmd, Timestamp(2100)).unwrap_err(),
+        TransitionError::RunAlreadyTerminated
+    );
 }
 
 #[test]

@@ -126,6 +126,12 @@ fn handle_resume_session(
     let Some(run) = active_run else {
         return Err(TransitionError::NoActiveRun);
     };
+    if run.status == RunStatus::CancelRequested {
+        return Err(TransitionError::RunCancelling);
+    }
+    if is_terminal_run_status(run.status) {
+        return Err(TransitionError::RunAlreadyTerminated);
+    }
 
     let mut next_session = session.clone();
     next_session.current_revision = Revision(session.current_revision.0 + 1);

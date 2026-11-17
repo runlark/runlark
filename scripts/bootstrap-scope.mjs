@@ -16,7 +16,7 @@ const forbidden = files.filter((file) => {
 
     return (
         /(?:^|\/)(?:Dockerfile)$/.test(file) ||
-        /\.(?:[jt]sx|wasm|wit|py|go|lean|tsp|css|scss|html)$/.test(file)
+        /\.(?:[cm]?js|[jt]sx|sh|bash|wasm|wit|py|go|lean|tsp|css|scss|html)$/.test(file)
     );
 });
 

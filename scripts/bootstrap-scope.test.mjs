@@ -46,6 +46,8 @@ test("integrated languages (Rust, TypeScript, SQL) pass scope check", () => {
 
 for (const file of [
     "web/src/app.tsx",
+    "web/tool.js",
+    "bin/build.sh",
     "images/check/Dockerfile",
     "plugins/result.wit",
     "bin/sample.wasm",

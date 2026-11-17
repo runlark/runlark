@@ -15,6 +15,9 @@ pub struct ReconciliationEngine;
 impl ReconciliationEngine {
     /// Detects inflight runs and outbox commands on daemon startup.
     ///
+    /// `waiting_for_approval` is intentionally preserved across restarts because human approval
+    /// decisions survive daemon downtime without an active DSH loop.
+    ///
     /// # Errors
     /// Returns `StorageError` if SQL query fails.
     pub fn scan_inflight(conn: &Connection) -> Result<InflightState, StorageError> {
