@@ -1,6 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["crates/runlark-domain", "crates/runlark-local", "crates/runlark-cli"]
+members = [
+  "crates/runlark-domain",
+  "crates/runlark-local",
+  "crates/runlark-wasm",
+  "crates/runlark-cli",
+]
 
 [workspace.package]
 edition = "2024"
@@ -21,6 +26,7 @@ wildcard_imports = "deny"
 [workspace.dependencies]
 runlark-domain = { path = "crates/runlark-domain", version = "0.1.0" }
 runlark-local = { path = "crates/runlark-local", version = "0.1.0" }
+runlark-wasm = { path = "crates/runlark-wasm", version = "0.1.0" }
 runlark-cli = { path = "crates/runlark-cli", version = "0.1.0" }
 
 serde = { version = "1.0", features = ["derive"] }
@@ -42,3 +48,12 @@ tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 futures-util = "0.3"
 sha2 = "0.10"
 hex = "0.4"
+wasmtime = { version = "36.0.21", default-features = false, features = [
+  "cranelift",
+  "component-model",
+  "runtime",
+  "std",
+] }
+wit-parser = { version = "0.236.1", default-features = false, features = ["decoding"] }
+wit-component = { version = "0.236.1", default-features = false }
+wat = "~1.236.1"

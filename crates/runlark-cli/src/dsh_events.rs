@@ -60,6 +60,7 @@ pub fn apply_runtime_event_and_reconcile(
     }
 
     state.publish_events(&outcome.session.id.0, &outcome.events);
+    state.notify_scheduler();
     Ok(outcome)
 }
 

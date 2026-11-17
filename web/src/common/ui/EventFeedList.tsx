@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { getStrings, type RunlarkStrings } from "../i18n";
 import { formatEventTime, summarizeEventPayload, type DaemonEventItem } from "../runlark-types";
 
 export interface EventFeedListProps {
@@ -6,6 +7,7 @@ export interface EventFeedListProps {
   readonly loading: boolean;
   readonly streamError: string | null;
   readonly lastSeq: number | null;
+  readonly strings?: RunlarkStrings;
 }
 
 export function EventFeedList({
@@ -13,15 +15,18 @@ export function EventFeedList({
   loading,
   streamError,
   lastSeq,
+  strings = getStrings("en"),
 }: EventFeedListProps): ReactNode {
   return (
     <section className="rl-card" aria-labelledby="rl-events-heading">
       <header className="rl-card-header">
         <h3 id="rl-events-heading" className="rl-section-heading">
-          Live event stream
+          {strings.liveEventsHeading}
         </h3>
         <span className="rl-meta-value" aria-live="polite" data-testid="rl-event-cursor">
-          {lastSeq === null ? "No events" : `seq #${String(lastSeq)} · ${String(events.length)}`}
+          {lastSeq === null
+            ? strings.eventsNone
+            : `seq #${String(lastSeq)} · ${String(events.length)}`}
         </span>
       </header>
 
@@ -32,10 +37,10 @@ export function EventFeedList({
       ) : null}
 
       {loading && events.length === 0 ? (
-        <p className="rl-status-line">Loading run event history...</p>
+        <p className="rl-status-line">{strings.eventsLoading}</p>
       ) : events.length === 0 ? (
         <p className="rl-status-line" data-testid="rl-events-empty">
-          No run events persisted in SQLite yet.
+          {strings.eventsEmpty}
         </p>
       ) : (
         <ul className="rl-event-list" data-testid="rl-event-list">

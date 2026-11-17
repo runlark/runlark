@@ -3,14 +3,28 @@ import type {} from "@deepseek-ai/dsh-client-ui-renderer/client";
 import type {} from "@deepseek-ai/dsh-client-ui-session/client";
 import type {} from "@deepseek-ai/dsh-client-ui-sidebar-right/client";
 import {
+  RUNLARK_BOARD_TAB_ID,
+  RUNLARK_BOARD_TAB_KIND,
   RUNLARK_TAB_ID,
   RUNLARK_TAB_KIND,
+  RunlarkBoardGlyph,
+  RunlarkBoardTabBody,
+  RunlarkBoardTabTitle,
   RunlarkMarkGlyph,
   RunlarkTabBody,
   RunlarkTabTitle,
 } from "./slots";
 
-export { RUNLARK_TAB_ID, RUNLARK_TAB_KIND, RunlarkTabBody, RunlarkTabTitle };
+export {
+  RUNLARK_BOARD_TAB_ID,
+  RUNLARK_BOARD_TAB_KIND,
+  RUNLARK_TAB_ID,
+  RUNLARK_TAB_KIND,
+  RunlarkBoardTabBody,
+  RunlarkBoardTabTitle,
+  RunlarkTabBody,
+  RunlarkTabTitle,
+};
 
 export const inject = ["sidebarRightTabs", "sidebarRight", "slots", "uiSession"];
 
@@ -64,6 +78,27 @@ export function apply(ctx: ClientContext): void {
 
   ctx.effect(
     () =>
+      ctx.sidebarRightTabs.register({
+        id: RUNLARK_BOARD_TAB_ID,
+        kind: RUNLARK_BOARD_TAB_KIND,
+        priority: "extension",
+        keepMounted: true,
+        title: () => "Runlark Board",
+        guide: [
+          {
+            id: "runlark-board",
+            order: 16,
+            title: () => "Runlark Kanban Board",
+            description: () => "Full 5-column Kanban board, task screen, diff, and acceptance",
+            icon: RunlarkBoardGlyph,
+          },
+        ],
+      }),
+    "runlark-ui: right-sidebar board tab type",
+  );
+
+  ctx.effect(
+    () =>
       ctx.slots.inject("sidebar.right.pane.tab", () =>
         ctx.slots.register(
           {
@@ -88,6 +123,34 @@ export function apply(ctx: ClientContext): void {
         ),
       ),
     "runlark-ui: right-sidebar tab title",
+  );
+
+  ctx.effect(
+    () =>
+      ctx.slots.inject("sidebar.right.pane.tab", () =>
+        ctx.slots.register(
+          {
+            name: "sidebar.right.pane.tab",
+            key: RUNLARK_BOARD_TAB_ID,
+          },
+          RunlarkBoardTabBody,
+        ),
+      ),
+    "runlark-ui: right-sidebar board tab body",
+  );
+
+  ctx.effect(
+    () =>
+      ctx.slots.inject("sidebar.right.pane.tab.title", () =>
+        ctx.slots.register(
+          {
+            name: "sidebar.right.pane.tab.title",
+            key: RUNLARK_BOARD_TAB_ID,
+          },
+          RunlarkBoardTabTitle,
+        ),
+      ),
+    "runlark-ui: right-sidebar board tab title",
   );
 
   ctx.effect(() => {

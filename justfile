@@ -30,6 +30,9 @@ lint-rust:
     cargo machete
     cargo deny check
 
+lint-wasm:
+    cargo test -p runlark-wasm
+
 lint-ts:
     cd packages/dsh-plugin && npx tsc --noEmit && npx tsc -p src/ui/tsconfig.json --noEmit
 
@@ -59,7 +62,7 @@ security:
     npm run audit
     gitleaks dir . --redact --no-banner
 
-lint: lint-scope lint-size lint-arch lint-rust lint-ts lint-ui lint-files lint-skills security
+lint: lint-scope lint-size lint-arch lint-rust lint-wasm lint-ts lint-ui lint-files lint-skills security
 
 # Observable guard behavior against isolated real Git repositories.
 test:

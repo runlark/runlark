@@ -7,6 +7,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../migrations/0001_initial.sql")),
     (2, include_str!("../migrations/0002_questions.sql")),
     (3, include_str!("../migrations/0003_dsh_cursors.sql")),
+    (
+        4,
+        include_str!("../migrations/0004_a1_board_and_history.sql"),
+    ),
 ];
 
 fn current_timestamp_ms() -> u64 {

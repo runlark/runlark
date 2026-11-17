@@ -30,6 +30,7 @@ fn active_session_and_run(run_id: &str, status: RunStatus) -> (Session, Run) {
         revision: Revision(1),
         created_at: Timestamp(1000),
         updated_at: Timestamp(1000),
+        ..Run::default()
     };
     (session, run)
 }
@@ -154,6 +155,7 @@ fn test_stop_while_waiting_for_approval_reconciles_on_turn_end() {
         revision: Revision(2),
         created_at: Timestamp(1000),
         updated_at: Timestamp(2000),
+        ..Run::default()
     };
 
     // StopRun while WaitingForApproval transitions cleanly to CancelRequested
@@ -214,6 +216,7 @@ fn test_runtime_turn_start_transitions() {
         revision: Revision(1),
         created_at: Timestamp(1000),
         updated_at: Timestamp(1000),
+        ..Run::default()
     };
 
     // Queued -> Running on TurnStarted
@@ -278,6 +281,7 @@ fn test_runtime_turn_end_outcomes() {
         revision: Revision(2),
         created_at: Timestamp(1000),
         updated_at: Timestamp(1100),
+        ..Run::default()
     };
 
     // Running -> Completed on TurnEnded(Completed)

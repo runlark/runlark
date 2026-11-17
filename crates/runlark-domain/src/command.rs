@@ -127,4 +127,19 @@ impl SessionCommand {
             Self::AnswerQuestion(c) => c.expected_revision,
         }
     }
+
+    /// Returns a canonical copy with `created_at` zeroed for idempotent payload hashing.
+    #[must_use]
+    pub fn canonical_for_hash(&self) -> Self {
+        let mut cloned = self.clone();
+        match &mut cloned {
+            Self::SendPrompt(c) => c.created_at = Timestamp(0),
+            Self::StopRun(c) => c.created_at = Timestamp(0),
+            Self::ResumeSession(c) => c.created_at = Timestamp(0),
+            Self::ChangeCwd(c) => c.created_at = Timestamp(0),
+            Self::ArchiveSession(c) => c.created_at = Timestamp(0),
+            Self::AnswerQuestion(c) => c.created_at = Timestamp(0),
+        }
+        cloned
+    }
 }

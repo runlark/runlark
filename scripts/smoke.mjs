@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { act } from "react";
+import { runA1SoloAlphaSmoke } from "./smoke-a1.mjs";
 import {
     apiJson,
     getFreePort,
@@ -24,12 +25,29 @@ execFileSync("node", ["scripts/build-dsh-client.mjs"], { stdio: "inherit" });
 console.log("Compiling runlark binary...");
 execFileSync("cargo", ["build", "--bin", "runlark"], { stdio: "inherit" });
 
+const binaryPath = join(process.cwd(), "target", "debug", "runlark");
+console.log("Verifying first-party workflow package via `runlark plugin inspect/validate`...");
+const inspectOut = execFileSync(
+    binaryPath,
+    ["plugin", "inspect", "workflows/solo-default", "--json"],
+    { encoding: "utf8" },
+);
+const inspected = JSON.parse(inspectOut);
+assert.equal(inspected.manifest.name, "solo-default");
+assert.equal(inspected.wit_contract.package_name, "runlark:workflow@0.1.0");
+const validateOut = execFileSync(
+    binaryPath,
+    ["plugin", "validate", "workflows/solo-default", "--json"],
+    { encoding: "utf8" },
+);
+const validated = JSON.parse(validateOut);
+assert.equal(validated.validation.verdict, "pass");
+
 const baseDir = mkdtempSync(join(tmpdir(), "runlark-a0-smoke-"));
 const repoDir = join(baseDir, "workspace");
 const daemonDataDir = join(baseDir, "daemon-data");
 const dshStateDir = join(baseDir, "dsh-state");
 const dbPath = join(daemonDataDir, "runlark.db");
-const binaryPath = join(process.cwd(), "target", "debug", "runlark");
 
 const daemonPort = await getFreePort();
 const dshPort = await getFreePort();
@@ -111,6 +129,22 @@ try {
     const sessAfterSend = await apiJson(`${daemonUrl}/api/v1/sessions/${sessionId}`);
     assert.equal(sessAfterSend.json.worktree_path, expectedWt);
     assert.equal(sessAfterSend.json.active_run_status, "running");
+
+    // Exercise digest-pinned WASM validator through daemon Verification endpoint
+    const verifyRes = await apiJson(`${daemonUrl}/api/v1/runs/run_a0_1/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            task_id: "task_a0_1",
+            changed_files: ["src/lib.rs"],
+            checks: [{ name: "smoke-check", passed: true, exit_code: 0 }],
+            diff_bytes: 256,
+            repair_attempt: 0,
+        }),
+    });
+    assert.equal(verifyRes.status, 200);
+    assert.equal(verifyRes.json.verdict, "pass");
+    assert.equal(verifyRes.json.package_digest, validated.inspection.package_digest);
     assert.ok(git("worktree", "list", "--porcelain").includes(expectedWt));
     const dshSessFile = JSON.parse(
         readFileSync(join(dshStateDir, "sessions", `${sessionId}.json`), "utf8"),
@@ -471,3 +505,5 @@ try {
     await stopProcess(activeDsh, "dsh-final").catch(() => {});
     rmSync(baseDir, { recursive: true, force: true });
 }
+
+await runA1SoloAlphaSmoke(binaryPath);

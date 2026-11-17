@@ -2,6 +2,7 @@ use crate::command_store::{CommandApplyOutcome, CommandStore};
 use crate::error::StorageError;
 use crate::event_store::{EventStore, StoredEvent};
 use crate::question_store::QuestionStore;
+use crate::run_queries::RunQueries;
 use crate::session_store::SessionStore;
 use runlark_domain::{
     AnswerQuestionCommand, Question, QuestionId, QuestionStatus, Run, RunId, RuntimeEvent, Session,
@@ -72,6 +73,11 @@ impl LocalStore {
             )?;
         }
         SessionStore::save_run(&tx, &updated_run)?;
+        if updated_run.status.is_terminal()
+            && let Some(task_id) = &updated_run.task_id
+        {
+            RunQueries::clear_task_active_run_if_matches(&tx, task_id, &updated_run.id, now)?;
+        }
 
         match event {
             RuntimeEvent::UserQuestionAsked {

@@ -1,4 +1,5 @@
 import { useId, useState, type FormEvent, type ReactNode } from "react";
+import { getStrings, type RunlarkStrings } from "../i18n";
 import type { DaemonQuestion } from "../runlark-types";
 import { ActionButton } from "./ActionButton";
 import { StatusBadge } from "./StatusBadge";
@@ -7,6 +8,7 @@ export interface QuestionDecisionCardProps {
   readonly question: DaemonQuestion;
   readonly submitting: boolean;
   readonly submitError: string | null;
+  readonly strings?: RunlarkStrings;
   readonly onSubmitAnswer: (questionId: string, answer: string) => void;
 }
 
@@ -14,6 +16,7 @@ export function QuestionDecisionCard({
   question,
   submitting,
   submitError,
+  strings = getStrings("en"),
   onSubmitAnswer,
 }: QuestionDecisionCardProps): ReactNode {
   const hasOptions = question.options.length > 0;
@@ -31,7 +34,7 @@ export function QuestionDecisionCard({
     const trimmedCustom = customAnswer.trim();
     const chosen = trimmedCustom.length > 0 ? trimmedCustom : selectedOption.trim();
     if (!chosen) {
-      setValidationError("Select an option or enter a response before submitting.");
+      setValidationError(strings.answerValidationRequired);
       return;
     }
     setValidationError(null);
@@ -47,7 +50,7 @@ export function QuestionDecisionCard({
       data-testid="rl-question-card"
     >
       <div className="rl-attention-strip">
-        <span>Human decision required</span>
+        <span>{strings.humanDecisionRequired}</span>
         <StatusBadge status="waiting_for_approval" />
       </div>
 
@@ -63,7 +66,7 @@ export function QuestionDecisionCard({
       <form onSubmit={handleSubmit} className="rl-field" aria-labelledby={formHeadingId} noValidate>
         {hasOptions ? (
           <fieldset className="rl-fieldset">
-            <legend className="rl-legend">Choose an option</legend>
+            <legend className="rl-legend">{strings.chooseOptionLegend}</legend>
             {question.options.map((option, idx) => {
               const optionId = `${radioGroupName}-${String(idx)}`;
               return (
@@ -93,7 +96,7 @@ export function QuestionDecisionCard({
 
         <div className="rl-field">
           <label htmlFor={customInputId} className="rl-label">
-            {hasOptions ? "Or write a custom answer" : "Answer"}
+            {hasOptions ? strings.customAnswerOrWrite : strings.customAnswerLabel}
           </label>
           <input
             id={customInputId}

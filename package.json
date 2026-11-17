@@ -18,7 +18,7 @@
     "lint:feod": "node .agents/skills/feod/scripts/feod.mjs info --json",
     "lint:ui": "node scripts/lint-ui.mjs",
     "test:ui-gates": "node --test scripts/ui-gates.test.mjs",
-    "audit": "npm audit --audit-level=low"
+    "audit": "node scripts/npm-audit.mjs"
   },
   "devDependencies": {
     "@deepseek-ai/dsh-client-store": "0.2.2-rc.3",

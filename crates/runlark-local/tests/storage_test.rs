@@ -32,6 +32,7 @@ fn test_persist_intent_idempotency_and_conflict() {
         revision: Revision(1),
         created_at: Timestamp(1000),
         updated_at: Timestamp(1000),
+        ..Run::default()
     };
     SessionStore::save_run(&conn, &run).expect("save run");
 
@@ -146,6 +147,7 @@ fn test_event_store_append_and_catchup() {
         revision: Revision(1),
         created_at: Timestamp(1000),
         updated_at: Timestamp(1000),
+        ..Run::default()
     };
     SessionStore::save_run(&conn, &run).expect("save run");
 
@@ -218,6 +220,7 @@ fn test_event_store_includes_seq_zero_on_full_replay() {
         revision: Revision(1),
         created_at: Timestamp(1000),
         updated_at: Timestamp(1000),
+        ..Run::default()
     };
     SessionStore::save_run(&conn, &run).expect("save run");
 

@@ -1,7 +1,7 @@
 use axum::Json;
 use axum::http::StatusCode;
 use runlark_domain::{RunStatus, TransitionError};
-use runlark_local::StorageError;
+use runlark_local::{StorageError, sha256_hex};
 use serde::Serialize;
 
 /// Structured JSON error payload returned by daemon HTTP endpoints.
@@ -54,6 +54,39 @@ pub fn storage_error_to_http(err: StorageError) -> ApiError {
             "question_not_found",
             format!("Question not found: {id}"),
         ),
+        StorageError::ProjectNotFound(id) => api_error(
+            StatusCode::NOT_FOUND,
+            "project_not_found",
+            format!("Project not found: {id}"),
+        ),
+        StorageError::TaskNotFound(id) => api_error(
+            StatusCode::NOT_FOUND,
+            "task_not_found",
+            format!("Task not found: {id}"),
+        ),
+        StorageError::DecisionNotFound(id) => api_error(
+            StatusCode::NOT_FOUND,
+            "decision_not_found",
+            format!("Decision not found: {id}"),
+        ),
+        StorageError::ArtifactNotFound(digest) => api_error(
+            StatusCode::NOT_FOUND,
+            "artifact_not_found",
+            format!("Artifact not found: {digest}"),
+        ),
+        StorageError::CorruptArtifact { digest, .. } => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "corrupt_artifact",
+            format!("Corrupt CAS artifact: {digest}"),
+        ),
+        StorageError::Domain(e) => api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "domain_error",
+            e.to_string(),
+        ),
+        StorageError::Io(e) => {
+            api_error(StatusCode::INTERNAL_SERVER_ERROR, "io_error", e.to_string())
+        }
         StorageError::Transition(TransitionError::RevisionMismatch { expected, actual }) => (
             StatusCode::CONFLICT,
             Json(ApiErrorBody {
@@ -102,4 +135,13 @@ pub const fn run_status_str(status: RunStatus) -> &'static str {
         RunStatus::Failed => "failed",
         RunStatus::Interrupted => "interrupted",
     }
+}
+
+/// Derives a deterministic short entity identifier from `command_id` for idempotent retries
+/// when a client supplies `command_id` without specifying an explicit entity ID.
+#[must_use]
+pub fn deterministic_id(prefix: &str, command_id: &str) -> String {
+    let digest = sha256_hex(command_id.as_bytes());
+    let short = &digest[..16];
+    format!("{prefix}_{short}")
 }

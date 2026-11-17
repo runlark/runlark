@@ -1,5 +1,5 @@
 use crate::error::StorageError;
-use rusqlite::Connection;
+use rusqlite::{Connection, TransactionBehavior};
 use std::path::Path;
 
 /// Converts an unsigned integer to `SQLite` `i64`, rejecting values above `i64::MAX`.
@@ -52,4 +52,22 @@ pub fn open_in_memory() -> Result<Connection, StorageError> {
     let conn = Connection::open_in_memory()?;
     configure_connection(&conn)?;
     Ok(conn)
+}
+
+/// Runs `f` inside a single `TransactionBehavior::Immediate` `SQLite` transaction and commits it.
+///
+/// # Errors
+/// Returns `E` (and rolls back the transaction on drop) if starting the transaction,
+/// running `f`, or committing fails.
+pub fn with_immediate_tx<T, E, F>(conn: &mut Connection, f: F) -> Result<T, E>
+where
+    E: From<StorageError>,
+    F: FnOnce(&Connection) -> Result<T, E>,
+{
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(StorageError::from)?;
+    let result = f(&tx)?;
+    tx.commit().map_err(StorageError::from)?;
+    Ok(result)
 }

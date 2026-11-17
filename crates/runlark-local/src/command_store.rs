@@ -81,10 +81,21 @@ impl CommandStore {
             | DomainEvent::RunCompleted { run_id, .. }
             | DomainEvent::RunFailed { run_id, .. }
             | DomainEvent::RunInterrupted { run_id, .. }
-            | DomainEvent::SessionResumed { run_id, .. } => Some(run_id),
+            | DomainEvent::SessionResumed { run_id, .. }
+            | DomainEvent::RunStageAdvanced { run_id, .. }
+            | DomainEvent::AttemptRecorded { run_id, .. }
+            | DomainEvent::RepairScheduled { run_id, .. }
+            | DomainEvent::BudgetExceeded { run_id, .. }
+            | DomainEvent::UnknownCostRecorded { run_id, .. }
+            | DomainEvent::DecisionRecorded { run_id, .. }
+            | DomainEvent::ArtifactAttached { run_id, .. } => Some(run_id),
             DomainEvent::SessionCreated { .. }
             | DomainEvent::CwdChanged { .. }
-            | DomainEvent::SessionArchived { .. } => None,
+            | DomainEvent::SessionArchived { .. }
+            | DomainEvent::ProjectCreated { .. }
+            | DomainEvent::TaskCreated { .. }
+            | DomainEvent::TaskStageChanged { .. }
+            | DomainEvent::TaskPlanUpdated { .. } => None,
         }
     }
 
@@ -202,6 +213,23 @@ impl CommandStore {
         Ok(PersistOutcome::Inserted)
     }
 
+    /// Returns stored `payload` JSON for an existing `commands` entry, if present.
+    ///
+    /// # Errors
+    /// Returns [`StorageError::Sqlite`] if querying `commands` fails.
+    pub fn get_command_payload(
+        conn: &Connection,
+        command_id: &CommandId,
+    ) -> Result<Option<String>, StorageError> {
+        conn.query_row(
+            "SELECT payload FROM commands WHERE command_id = ?1",
+            params![command_id.as_ref()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(StorageError::from)
+    }
+
     /// Atomically checks command idempotency, loads session and active run, runs
     /// `runlark_domain::transition`, and persists `commands`, `sessions`, `runs`, `questions`,
     /// and `events` inside one `TransactionBehavior::Immediate` transaction.
@@ -216,7 +244,8 @@ impl CommandStore {
         now: Timestamp,
     ) -> Result<CommandApplyOutcome, StorageError> {
         let payload_json = serde_json::to_string(command)?;
-        let payload_hash = Self::compute_hash(&payload_json);
+        let canonical_json = serde_json::to_string(&command.canonical_for_hash())?;
+        let payload_hash = Self::compute_hash(&canonical_json);
 
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 

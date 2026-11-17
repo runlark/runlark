@@ -23,6 +23,19 @@ components:
     in: crates/runlark-cli/**
     because: "CLI interface and local daemon process, managing session lifecycle and IPC/HTTP endpoints"
 
+  runlark-wasm:
+    in: crates/runlark-wasm/**
+    because: "Versioned WIT host, package manifest verification, digest pinning and bounded Wasmtime execution"
+
+  wit:
+    in: wit/**
+    because: "Versioned WIT contracts defining host/guest workflow and validator boundaries"
+
+  workflows:
+    in: workflows/**
+    allow_importers: []
+    because: "First-party workflow packages with manifest, declarative stages and compiled WASM validator"
+
   dsh-plugin:
     in: packages/dsh-plugin/**
     except: packages/dsh-plugin/src/ui/**
@@ -90,6 +103,18 @@ forbid_external:
     because: "Only web/src/common/ui/<component> adapters may import Mantine; consume readonly props/slots contracts instead"
   - name: "@reatom/jsx"
     because: "Runlark uses React + Mantine adapters with Reatom v1001, never @reatom/jsx"
+  - name: wasmtime
+    allow: [runlark-wasm]
+    because: "Wasmtime engine and component host execution are encapsulated in crates/runlark-wasm"
+  - name: wit-parser
+    allow: [runlark-wasm]
+    because: "WIT contract parsing is encapsulated in crates/runlark-wasm"
+  - name: wit-component
+    allow: [runlark-wasm]
+    because: "WIT component encoding and metadata validation are encapsulated in crates/runlark-wasm"
+  - name: wat
+    allow: [runlark-wasm]
+    because: "WAT assembly is encapsulated in crates/runlark-wasm"
 
 rules:
   runlark-domain:
@@ -100,6 +125,31 @@ rules:
         because: "Domain is pure: no database dependencies"
       - name: reqwest
         because: "Domain is pure: no HTTP networking"
+
+  runlark-cli:
+    may_depend_on:
+      - runlark-wasm
+    because: "CLI and daemon may invoke runlark-wasm in addition to lower workspace layers"
+
+  runlark-wasm:
+    may_depend_on:
+      - runlark-domain
+    forbid_external:
+      - name: rusqlite
+        because: "WASM host does not access SQLite directly"
+      - name: tokio
+        because: "WASM host executes bounded validations without an async runtime"
+      - name: reqwest
+        because: "WASM host has no ambient network I/O"
+    because: "WASM host depends only on pure domain contracts and executes bounded guests"
+
+  wit:
+    may_depend_on: []
+    because: "WIT contract definitions are pure interface specifications"
+
+  workflows:
+    may_depend_on: []
+    because: "First-party workflow packages are standalone data and guest artifacts"
 
   dsh-plugin:
     may_depend_on: []
@@ -198,6 +248,24 @@ examples:
     to: crates/runlark-local/src/lib.rs
     expect: allowed
   - from: crates/runlark-cli/src/lib.rs
+    to: crates/runlark-domain/src/lib.rs
+    expect: allowed
+  - from: crates/runlark-domain/src/lib.rs
+    to: crates/runlark-wasm/src/lib.rs
+    expect: rejected
+  - from: crates/runlark-local/src/lib.rs
+    to: crates/runlark-wasm/src/lib.rs
+    expect: rejected
+  - from: crates/runlark-wasm/src/lib.rs
+    to: crates/runlark-local/src/lib.rs
+    expect: rejected
+  - from: crates/runlark-wasm/src/lib.rs
+    to: crates/runlark-cli/src/lib.rs
+    expect: rejected
+  - from: crates/runlark-cli/src/lib.rs
+    to: crates/runlark-wasm/src/lib.rs
+    expect: allowed
+  - from: crates/runlark-wasm/src/lib.rs
     to: crates/runlark-domain/src/lib.rs
     expect: allowed
   - from: packages/dsh-plugin/src/index.ts

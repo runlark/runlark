@@ -5,9 +5,9 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use runlark_domain::{
     AnswerQuestionCommand, CommandId, Question, QuestionId, QuestionStatus, Revision, RunId,
-    SessionId, Timestamp,
+    SessionCommand, SessionId, Timestamp,
 };
-use runlark_local::{CommandApplyOutcome, LocalStore, QuestionStore, SessionStore};
+use runlark_local::{CommandApplyOutcome, CommandStore, LocalStore, QuestionStore, SessionStore};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -24,7 +24,7 @@ pub struct AnswerQuestionRequest {
     pub expected_revision: Option<u64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct QuestionResponse {
     pub question_id: String,
     pub session_id: String,
@@ -187,8 +187,25 @@ pub async fn answer_question(
         })?;
 
     let now = AppState::current_timestamp_ms();
-    let command_id = CommandId::from(req.command_id.unwrap_or_else(|| Uuid::new_v4().to_string()));
-    let expected_revision = Revision(req.expected_revision.unwrap_or(session.current_revision.0));
+    let explicit_cmd_id = req.command_id.filter(|s| !s.trim().is_empty());
+    let command_id = CommandId::from(
+        explicit_cmd_id
+            .clone()
+            .unwrap_or_else(|| Uuid::new_v4().to_string()),
+    );
+    let prior_rev = if req.expected_revision.is_none() && explicit_cmd_id.is_some() {
+        CommandStore::get_command_payload(&conn, &command_id)
+            .map_err(storage_error_to_http)?
+            .and_then(|json| serde_json::from_str::<SessionCommand>(&json).ok())
+            .and_then(|c| match c {
+                SessionCommand::AnswerQuestion(prev) => Some(prev.expected_revision),
+                _ => None,
+            })
+    } else {
+        None
+    };
+    let expected_revision = prior_rev
+        .unwrap_or_else(|| Revision(req.expected_revision.unwrap_or(session.current_revision.0)));
 
     let cmd = AnswerQuestionCommand {
         command_id: command_id.clone(),
@@ -213,6 +230,7 @@ pub async fn answer_question(
             state.publish_events(&session.id.0, &events);
             state.notify_outbox();
             state.notify_dsh_subscriber();
+            state.notify_scheduler();
             Ok((
                 StatusCode::CREATED,
                 Json(AnswerQuestionResponse {

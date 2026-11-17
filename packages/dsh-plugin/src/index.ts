@@ -1,6 +1,10 @@
 export * from "./types.ts";
 export * from "./daemon_client.ts";
+export * from "./daemon_board_client.ts";
 export * from "./interceptor.ts";
 export * from "./stream_reconnector.ts";
+export * from "./tools.ts";
+export * from "./usage_bridge.ts";
+export * from "./web_board_routes.ts";
 export * from "./bridge.ts";
 export { apply, Config, inject, name, type RunlarkPluginConfig } from "./plugin.ts";

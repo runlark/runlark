@@ -39,6 +39,7 @@ fn test_restart_recovery_reconciles_inflight_runs() {
             revision: Revision(1),
             created_at: Timestamp(1000),
             updated_at: Timestamp(1000),
+            ..Run::default()
         };
         SessionStore::save_run(&conn, &run).expect("save run");
 
@@ -118,6 +119,7 @@ fn test_restart_recovery_reconciles_cancelling_and_queued_runs() {
             revision: Revision(1),
             created_at: Timestamp(1000),
             updated_at: Timestamp(1000),
+            ..Run::default()
         };
         SessionStore::save_run(&conn, &run_cancelling).expect("save run cancelling");
 
@@ -141,6 +143,7 @@ fn test_restart_recovery_reconciles_cancelling_and_queued_runs() {
             revision: Revision(1),
             created_at: Timestamp(1100),
             updated_at: Timestamp(1100),
+            ..Run::default()
         };
         SessionStore::save_run(&conn, &run_queued).expect("save run queued");
     }
@@ -184,6 +187,7 @@ fn test_restart_recovery_reconciles_cancelling_and_queued_runs() {
             revision: Revision(1),
             created_at: Timestamp(1100),
             updated_at: Timestamp(1200),
+            ..Run::default()
         };
         SessionStore::save_run(&conn, &completed_run).expect("save completed run");
         ReconciliationEngine::mark_interrupted(&conn, &completed_run.id, Timestamp(4000))
@@ -254,6 +258,7 @@ fn seed_waiting_and_active_runs(db_path: &std::path::Path) {
             revision: Revision(1),
             created_at: Timestamp(1000),
             updated_at: Timestamp(1000),
+            ..Run::default()
         },
     )
     .expect("save active run");

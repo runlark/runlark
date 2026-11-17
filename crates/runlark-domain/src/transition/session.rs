@@ -46,6 +46,7 @@ pub enum RuntimeEvent {
 }
 
 impl RuntimeEvent {
+    /// Returns the target session ID for this runtime event.
     #[must_use]
     pub fn session_id(&self) -> &SessionId {
         match self {
@@ -55,6 +56,7 @@ impl RuntimeEvent {
         }
     }
 
+    /// Returns the target run ID for this runtime event.
     #[must_use]
     pub fn run_id(&self) -> &RunId {
         match self {
@@ -63,13 +65,6 @@ impl RuntimeEvent {
             | Self::TurnEnded { run_id, .. } => run_id,
         }
     }
-}
-
-fn is_terminal_run_status(status: RunStatus) -> bool {
-    matches!(
-        status,
-        RunStatus::Stopped | RunStatus::Completed | RunStatus::Failed
-    )
 }
 
 fn validate_active_run<'a>(
@@ -88,7 +83,7 @@ fn validate_active_run<'a>(
     if run.status == RunStatus::CancelRequested {
         return Err(TransitionError::RunCancelling);
     }
-    if is_terminal_run_status(run.status) {
+    if run.status.is_terminal() {
         return Err(TransitionError::RunAlreadyTerminated);
     }
     Ok(run)
@@ -107,7 +102,7 @@ fn handle_send_prompt(
         if run.status == RunStatus::WaitingForApproval {
             return Err(TransitionError::RunWaitingForApproval);
         }
-        if is_terminal_run_status(run.status) {
+        if run.status.is_terminal() {
             if run.id == cmd.run_id {
                 return Err(TransitionError::RunAlreadyTerminated);
             }
@@ -123,7 +118,7 @@ fn handle_send_prompt(
     next_session.current_revision = Revision(session.current_revision.0 + 1);
     next_session.updated_at = now;
 
-    let mut run = match active_run.filter(|r| !is_terminal_run_status(r.status)) {
+    let mut run = match active_run.filter(|r| !r.status.is_terminal()) {
         Some(existing) => {
             let mut updated = existing.clone();
             updated.revision = Revision(existing.revision.0 + 1);
@@ -137,6 +132,7 @@ fn handle_send_prompt(
             revision: Revision(1),
             created_at: now,
             updated_at: now,
+            ..Run::default()
         },
     };
     run.status = RunStatus::Running;
@@ -198,7 +194,7 @@ fn handle_resume_session(
     if run.status == RunStatus::CancelRequested {
         return Err(TransitionError::RunCancelling);
     }
-    if is_terminal_run_status(run.status) {
+    if run.status.is_terminal() {
         return Err(TransitionError::RunAlreadyTerminated);
     }
 
@@ -226,9 +222,6 @@ fn handle_resume_session(
     })
 }
 
-// Note: pure `transition()` checks run status (`WaitingForApproval`) and `expected_revision`;
-// `question_id` existence, ownership (`session_id`/`run_id`), and `Pending` status are enforced
-// atomically in `CommandStore::persist_command_and_transition` via `QuestionStore`.
 fn handle_answer_question(
     session: &Session,
     active_run: Option<&Run>,
@@ -274,7 +267,6 @@ fn is_run_blocking_session_mutation(status: RunStatus) -> bool {
     )
 }
 
-// Session-level commands (ChangeCwd, ArchiveSession) do not address a specific run and ignore cmd.run_id.
 fn handle_change_cwd(
     session: &Session,
     active_run: Option<&Run>,
@@ -449,6 +441,31 @@ fn handle_turn_ended(
     outcome: &TurnEndStatus,
     now: Timestamp,
 ) -> TransitionOutcome {
+    if run.task_id.is_some()
+        && run.status != RunStatus::CancelRequested
+        && matches!(outcome, TurnEndStatus::Completed)
+    {
+        let mut next_session = session.clone();
+        next_session.current_revision = Revision(session.current_revision.0 + 1);
+        next_session.updated_at = now;
+        next_session.active_run_id = Some(run.id.clone());
+
+        let mut next_run = run.clone();
+        if !(run.status == RunStatus::WaitingForApproval
+            && run.workflow_stage == crate::task::WorkflowStage::HumanAcceptance)
+        {
+            next_run.status = RunStatus::Running;
+        }
+        next_run.revision = Revision(run.revision.0 + 1);
+        next_run.updated_at = now;
+
+        return TransitionOutcome {
+            new_session: next_session,
+            new_run: Some(next_run),
+            events: Vec::new(),
+        };
+    }
+
     let (final_status, domain_event) = if run.status == RunStatus::CancelRequested {
         (
             RunStatus::Stopped,
@@ -535,7 +552,7 @@ pub fn apply_runtime_event(
     if session.status == SessionStatus::Archived {
         return Err(TransitionError::SessionAlreadyArchived);
     }
-    if is_terminal_run_status(run.status) {
+    if run.status.is_terminal() {
         return Err(TransitionError::RunAlreadyTerminated);
     }
 
