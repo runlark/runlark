@@ -80,7 +80,8 @@ impl EventItemResponse {
 /// long-polling (`wait_ms`, capped at 30s) until a matching event is persisted.
 ///
 /// # Errors
-/// Returns `StatusCode::INTERNAL_SERVER_ERROR` if querying events from storage fails.
+/// Returns `StatusCode::NOT_FOUND` if the run does not exist,
+/// or `StatusCode::INTERNAL_SERVER_ERROR` if querying events from storage fails.
 pub async fn get_events(
     State(state): State<AppState>,
     Path(run_id): Path<String>,
@@ -100,6 +101,16 @@ pub async fn get_events(
                 e.to_string(),
             )
         })?;
+        if SessionStore::get_run(&conn, &target_run)
+            .map_err(storage_error_to_http)?
+            .is_none()
+        {
+            return Err(api_error(
+                StatusCode::NOT_FOUND,
+                "run_not_found",
+                format!("Run not found: {target_run}"),
+            ));
+        }
         EventStore::get_events(&conn, &target_run, after_seq).map_err(storage_error_to_http)?
     };
 

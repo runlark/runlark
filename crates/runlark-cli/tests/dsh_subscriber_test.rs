@@ -395,3 +395,111 @@ fn test_synthetic_interrupted_turn_end_only_stops_when_cancel_requested() {
         .expect("exists");
     assert_eq!(stopped_run.status, RunStatus::Stopped);
 }
+
+#[test]
+fn test_empty_user_question_reply_leaves_question_pending_and_joins_parts() {
+    let temp = TempDir::new().expect("temp dir");
+    let db_path = temp.path().join("empty_reply.db");
+    seed_dispatched_run(
+        &db_path,
+        temp.path(),
+        "sess_reply",
+        "run_reply",
+        "cmd_reply_send",
+    );
+
+    let mut conn = open_sqlite(&db_path).expect("open db");
+    let state = AppState::new(db_path);
+    let sid = SessionId::from("sess_reply");
+    let rid = RunId::from("run_reply");
+
+    let ask_event = DshWireEvent {
+        event_type: "tool/call".to_string(),
+        seq: 1,
+        time: 2000,
+        data: json!({
+            "name": "ask_user_question",
+            "callId": "q_reply_1",
+            "arguments": r#"{"questions":[{"question":"Proceed?"}]}"#
+        }),
+    };
+    process_dsh_wire_event(
+        &mut conn,
+        &state,
+        &sid,
+        Some("run_reply"),
+        &ask_event,
+        Timestamp(2000),
+    )
+    .expect("ask");
+
+    // Empty / missing content must NOT answer the question
+    let empty_reply = DshWireEvent {
+        event_type: "user/message".to_string(),
+        seq: 2,
+        time: 2100,
+        data: json!({
+            "source": { "kind": "user-question-reply", "callId": "q_reply_1" },
+            "content": [{ "type": "text", "text": "   " }]
+        }),
+    };
+    process_dsh_wire_event(
+        &mut conn,
+        &state,
+        &sid,
+        Some("run_reply"),
+        &empty_reply,
+        Timestamp(2100),
+    )
+    .expect("empty reply");
+
+    let still_pending = runlark_local::QuestionStore::get_question(
+        &conn,
+        &runlark_domain::QuestionId::from("q_reply_1"),
+    )
+    .expect("get q")
+    .expect("exists");
+    assert_eq!(
+        still_pending.status,
+        runlark_domain::QuestionStatus::Pending
+    );
+    assert_eq!(
+        SessionStore::get_run(&conn, &rid)
+            .expect("get run")
+            .expect("exists")
+            .status,
+        RunStatus::WaitingForApproval
+    );
+
+    // Multi-part content is joined cleanly when answering
+    let valid_reply = DshWireEvent {
+        event_type: "user/message".to_string(),
+        seq: 3,
+        time: 2200,
+        data: json!({
+            "source": { "kind": "user-question-reply", "callId": "q_reply_1" },
+            "content": [
+                { "type": "text", "text": "Approve" },
+                { "type": "text", "text": "with tests" }
+            ]
+        }),
+    };
+    process_dsh_wire_event(
+        &mut conn,
+        &state,
+        &sid,
+        Some("run_reply"),
+        &valid_reply,
+        Timestamp(2200),
+    )
+    .expect("valid reply");
+
+    let answered = runlark_local::QuestionStore::get_question(
+        &conn,
+        &runlark_domain::QuestionId::from("q_reply_1"),
+    )
+    .expect("get q")
+    .expect("exists");
+    assert_eq!(answered.status, runlark_domain::QuestionStatus::Answered);
+    assert_eq!(answered.answer.as_deref(), Some("Approve\nwith tests"));
+}

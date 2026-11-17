@@ -108,6 +108,33 @@ async fn test_list_questions_filters_both_run_id_and_session_id() {
 }
 
 #[tokio::test]
+async fn test_get_events_nonexistent_run_returns_not_found_immediately() {
+    let temp = TempDir::new().expect("temp dir");
+    let db_path = temp.path().join("events_missing.db");
+    let (state, base_url, handle) = spawn_api_server(&db_path).await;
+    let client = Client::new();
+
+    let started = Instant::now();
+    let resp = client
+        .get(format!(
+            "{base_url}/api/v1/runs/missing_run_id/events?wait_ms=10000"
+        ))
+        .send()
+        .await
+        .expect("get missing run");
+    let elapsed = started.elapsed();
+
+    assert_eq!(resp.status().as_u16(), 404);
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "nonexistent run must return 404 immediately (elapsed {elapsed:?})"
+    );
+
+    state.signal_shutdown();
+    handle.abort();
+}
+
+#[tokio::test]
 async fn test_events_long_poll_breaks_immediately_on_broadcast_lag() {
     let temp = TempDir::new().expect("temp dir");
     let db_path = temp.path().join("events_lag.db");

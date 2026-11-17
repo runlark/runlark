@@ -143,14 +143,15 @@ pub async fn run_daemon_with_dsh(
     tracing::info!("Runlark daemon listening on http://{}", addr);
 
     let shutdown_state = state.clone();
-    axum::serve(listener, app)
+    let serve_result = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             shutdown_signal().await;
             shutdown_state.signal_shutdown();
         })
-        .await?;
+        .await;
 
     let _ = shutdown_tx.send(true);
+    state.signal_shutdown();
     if let Err(err) = outbox_task.await {
         tracing::warn!("Outbox task terminated with join error: {err}");
     }
@@ -160,6 +161,7 @@ pub async fn run_daemon_with_dsh(
         tracing::warn!("DSH subscriber task terminated with join error: {err}");
     }
 
+    serve_result?;
     tracing::info!("Runlark daemon gracefully stopped.");
     Ok(())
 }

@@ -234,6 +234,10 @@ impl DshSubscriber {
         )
         .await?;
 
+        let mut poll_ticker = tokio::time::interval(self.poll_interval);
+        poll_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        poll_ticker.tick().await;
+
         loop {
             if *shutdown.borrow() {
                 return Ok(());
@@ -248,7 +252,7 @@ impl DshSubscriber {
                         &mut stream_counter,
                     ).await?;
                 }
-                () = tokio::time::sleep(self.poll_interval) => {
+                _ = poll_ticker.tick() => {
                     self.sync_subscriptions(
                         &mut write,
                         &mut active_streams,

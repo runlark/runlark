@@ -172,14 +172,20 @@ fn extract_question_reply(data: &Value) -> Option<(QuestionId, String)> {
         return None;
     }
     let call_id = source.get("callId").and_then(Value::as_str)?;
-    let text = data
+    let text: String = data
         .get("content")
         .and_then(Value::as_array)
-        .and_then(|parts| parts.first())
-        .and_then(|p| p.get("text"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|p| p.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
+    if text.trim().is_empty() {
+        return None;
+    }
 
     let formatted = serde_json::from_str::<Value>(&text)
         .ok()
@@ -188,12 +194,16 @@ fn extract_question_reply(data: &Value) -> Option<(QuestionId, String)> {
             if answers.len() == 1 {
                 let first = &answers[0];
                 if let Some(custom) = first.get("custom").and_then(Value::as_str)
-                    && !custom.is_empty()
+                    && !custom.trim().is_empty()
                 {
                     return Some(custom.to_string());
                 }
                 if let Some(selected) = first.get("selected").and_then(Value::as_array) {
-                    let labels: Vec<&str> = selected.iter().filter_map(Value::as_str).collect();
+                    let labels: Vec<&str> = selected
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .filter(|s| !s.trim().is_empty())
+                        .collect();
                     if !labels.is_empty() {
                         return Some(labels.join(", "));
                     }
@@ -202,6 +212,10 @@ fn extract_question_reply(data: &Value) -> Option<(QuestionId, String)> {
             None
         })
         .unwrap_or(text);
+
+    if formatted.trim().is_empty() {
+        return None;
+    }
 
     Some((QuestionId::from(call_id), formatted))
 }
