@@ -71,7 +71,7 @@ impl From<Question> for QuestionResponse {
     }
 }
 
-/// Lists pending human questions, optionally filtered by `session_id` or `run_id`.
+/// Lists pending human questions, optionally filtered by `session_id`, `run_id`, or both.
 ///
 /// # Errors
 /// Returns `StatusCode::INTERNAL_SERVER_ERROR` if querying `SQLite` fails.
@@ -87,14 +87,22 @@ pub async fn list_questions(
         )
     })?;
 
-    let questions = if let Some(run_id) = query.run_id {
-        QuestionStore::list_pending_for_run(&conn, &RunId::from(run_id))
-            .map_err(storage_error_to_http)?
-    } else if let Some(session_id) = query.session_id {
-        QuestionStore::list_pending_for_session(&conn, &SessionId::from(session_id))
-            .map_err(storage_error_to_http)?
-    } else {
-        QuestionStore::list_pending(&conn).map_err(storage_error_to_http)?
+    let questions = match (query.run_id, query.session_id) {
+        (Some(run_id), Some(session_id)) => {
+            let sid = SessionId::from(session_id);
+            QuestionStore::list_pending_for_run(&conn, &RunId::from(run_id))
+                .map_err(storage_error_to_http)?
+                .into_iter()
+                .filter(|q| q.session_id == sid)
+                .collect()
+        }
+        (Some(run_id), None) => QuestionStore::list_pending_for_run(&conn, &RunId::from(run_id))
+            .map_err(storage_error_to_http)?,
+        (None, Some(session_id)) => {
+            QuestionStore::list_pending_for_session(&conn, &SessionId::from(session_id))
+                .map_err(storage_error_to_http)?
+        }
+        (None, None) => QuestionStore::list_pending(&conn).map_err(storage_error_to_http)?,
     };
 
     Ok(Json(

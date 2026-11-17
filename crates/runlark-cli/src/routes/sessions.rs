@@ -130,7 +130,23 @@ pub async fn create_session(
 
     SessionStore::create_session(&conn, &session).map_err(storage_error_to_http)?;
     state.notify_dsh_subscriber();
-    let resp = enrich_session(&conn, session)?;
+    let resp = SessionResponse {
+        session_id: session.id.0,
+        task_id: session.task_id.0,
+        cwd: session.cwd,
+        status: session_status_str(session.status).to_string(),
+        current_revision: session.current_revision.0,
+        active_run_id: None,
+        active_run_status: None,
+        worktree_path: None,
+        latest_run_id: None,
+        latest_run_status: None,
+        latest_worktree_path: None,
+        dispatched_commands_count: 0,
+        pending_question: None,
+        created_at: session.created_at.0,
+        updated_at: session.updated_at.0,
+    };
     Ok((StatusCode::CREATED, Json(resp)))
 }
 

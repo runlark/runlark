@@ -1,5 +1,5 @@
 use crate::routes::error::{ApiError, api_error, storage_error_to_http};
-use crate::state::AppState;
+use crate::state::{AppState, StreamEventNotification};
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -7,8 +7,44 @@ use runlark_domain::{EventSeq, RunId, SessionId};
 use runlark_local::{EventStore, SessionStore, StoredEvent};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
+use tokio::sync::broadcast;
 
 const MAX_WAIT_MS: u64 = 30_000;
+
+async fn wait_for_event_notification(
+    state: &AppState,
+    receiver: &mut broadcast::Receiver<StreamEventNotification>,
+    wait_ms: u64,
+    matches: impl Fn(&StreamEventNotification) -> bool,
+) {
+    let mut shutdown = state.subscribe_shutdown();
+    let deadline = Instant::now() + Duration::from_millis(wait_ms);
+    loop {
+        if *shutdown.borrow() {
+            break;
+        }
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            break;
+        };
+        if remaining.is_zero() {
+            break;
+        }
+        tokio::select! {
+            res = tokio::time::timeout(remaining, receiver.recv()) => {
+                match res {
+                    Ok(Ok(note)) if matches(&note) => break,
+                    Ok(Ok(_)) => {}
+                    Ok(Err(
+                        broadcast::error::RecvError::Lagged(_)
+                        | broadcast::error::RecvError::Closed,
+                    ))
+                    | Err(_) => break,
+                }
+            }
+            _ = shutdown.changed() => break,
+        }
+    }
+}
 
 #[derive(Deserialize)]
 pub struct EventsQuery {
@@ -77,29 +113,7 @@ pub async fn get_events(
     }
 
     if let Some(ref mut receiver) = rx {
-        let mut shutdown = state.subscribe_shutdown();
-        let deadline = Instant::now() + Duration::from_millis(wait_ms);
-        loop {
-            if *shutdown.borrow() {
-                break;
-            }
-            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
-                break;
-            };
-            if remaining.is_zero() {
-                break;
-            }
-            tokio::select! {
-                res = tokio::time::timeout(remaining, receiver.recv()) => {
-                    match res {
-                        Ok(Ok(note)) if note.run_id == run_id => break,
-                        Ok(Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {}
-                        Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) | Err(_) => break,
-                    }
-                }
-                _ = shutdown.changed() => break,
-            }
-        }
+        wait_for_event_notification(&state, receiver, wait_ms, |note| note.run_id == run_id).await;
     }
 
     let conn = state.get_connection().map_err(|e| {
@@ -194,29 +208,10 @@ pub async fn get_session_events(
     }
 
     if let Some(ref mut receiver) = rx {
-        let mut shutdown = state.subscribe_shutdown();
-        let deadline = Instant::now() + Duration::from_millis(wait_ms);
-        loop {
-            if *shutdown.borrow() {
-                break;
-            }
-            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
-                break;
-            };
-            if remaining.is_zero() {
-                break;
-            }
-            tokio::select! {
-                res = tokio::time::timeout(remaining, receiver.recv()) => {
-                    match res {
-                        Ok(Ok(note)) if note.session_id == session_id => break,
-                        Ok(Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {}
-                        Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) | Err(_) => break,
-                    }
-                }
-                _ = shutdown.changed() => break,
-            }
-        }
+        wait_for_event_notification(&state, receiver, wait_ms, |note| {
+            note.session_id == session_id
+        })
+        .await;
     }
 
     let conn = state.get_connection().map_err(|e| {

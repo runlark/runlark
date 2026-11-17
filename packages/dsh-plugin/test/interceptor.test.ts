@@ -262,3 +262,41 @@ test("fetches initial non-1 revision from daemon and refreshes cache on 409 conf
   assert.equal(client.submittedCommands[1].payload.expected_revision, 8);
   assert.equal(interceptor.getKnownRevision("sess_sync"), 9);
 });
+
+test("cancel enforces persist-before-signal and aborts next() on persistence failure", async () => {
+  const client = new MockDaemonClient();
+  client.seedSession("sess_cancel", 1, "run_cancel_1");
+  const interceptor = new RunlarkSessionInterceptor(client, new Set(["sess_cancel"]));
+
+  await interceptor.prompt(
+    {
+      requestId: reqId("rpc_cancel_start"),
+      sessionId: SessionId("sess_cancel"),
+      mode: "queue",
+      content: [{ type: "text", text: "Start" }],
+    },
+    userSource("rpc_cancel_start"),
+    async () => ({ accepted: true }),
+  );
+
+  let nextCalledOnOk = false;
+  const okResult = await interceptor.cancel({ sessionId: SessionId("sess_cancel") }, () => {
+    assert.equal(client.submittedCommands.length, 2);
+    assert.equal(client.submittedCommands[1].type, "StopRun");
+    assert.equal(client.submittedCommands[1].payload.run_id, "run_cancel_1");
+    nextCalledOnOk = true;
+    return { accepted: true };
+  });
+  assert.equal(nextCalledOnOk, true);
+  assert.equal(okResult.accepted, true);
+
+  client.failNext = true;
+  let nextCalledOnFail = false;
+  await assert.rejects(async () => {
+    await interceptor.cancel({ sessionId: SessionId("sess_cancel") }, () => {
+      nextCalledOnFail = true;
+      return { accepted: true };
+    });
+  }, /Cancel persist failed/);
+  assert.equal(nextCalledOnFail, false, "next() must NOT be called if StopRun persistence failed");
+});
