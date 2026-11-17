@@ -10,6 +10,7 @@
     ".local/",
     ".omp/",
     ".claude/",
+    "skills/",
     "Cargo.lock",
     ".agents/skills/impeccable/scripts/modern-screenshot.umd.js",
     ".agents/skills/feod/scripts/",

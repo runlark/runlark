@@ -1,0 +1,165 @@
+diff --git a/lib/index.js b/lib/index.js
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -887,6 +887,11 @@
+ 	* @returns acknowledgement that the Agent accepted the prompt.
+ 	*/
+ 	async prompt(request, source) {
++		const interceptor = this.ctx.get("sessionCommandInterceptor");
++		if (interceptor?.handles(request.sessionId) && interceptor.prompt) return interceptor.prompt(request, source, () => this.executePrompt(request, source));
++		return this.executePrompt(request, source);
++	}
++	async executePrompt(request, source) {
+ 		const agent = await this.resolveAgent(request.sessionId);
+ 		if (this.hasPromptRequest(agent.session, request.requestId)) return { accepted: true };
+ 		if (request.content.length === 0) try {
+@@ -1061,6 +1066,11 @@
+ 	* @returns acknowledgement that cancellation was requested.
+ 	*/
+ 	cancel(request) {
++		const interceptor = this.ctx.get("sessionCommandInterceptor");
++		if (interceptor?.handles(request.sessionId) && interceptor.cancel) return interceptor.cancel(request, () => this.executeCancel(request));
++		return this.executeCancel(request);
++	}
++	executeCancel(request) {
+ 		const agent = this.ctx.agents.get(request.sessionId);
+ 		if (agent === void 0) throw new RemoteError("session/not-found", `session "${request.sessionId}" not found (not attached)`, { sessionId: request.sessionId });
+ 		if (hasApiSessionSubagentOwner(agent.session)) throw apiSessionSubagentOwnershipError(request.sessionId);
+diff --git a/lib/types/commands.d.ts b/lib/types/commands.d.ts
+--- a/lib/types/commands.d.ts	2026-11-17 14:44:08
++++ b/lib/types/commands.d.ts	2026-11-17 14:44:08
+@@ -2,6 +2,7 @@
+ import type { Context } from '@deepseek-ai/cordis';
+ import type { MessageSource } from '@deepseek-ai/dsh-llm';
+ import { ApiSessionAgentController } from './agent.ts';
++import type { SessionId } from '@deepseek-ai/dsh-session';
+ import type { SessionAttachmentRequest, SessionAttachmentValue, SessionCancelRequest, SessionCancelValue, SessionCreateRequest, SessionCreateValue, SessionForkRequest, SessionForkValue, SessionPromptRequest, SessionPromptValue, SessionRenameRequest, SessionRenameValue, SessionSelectModelRequest, SessionSelectModelValue, SessionUpdateQueueRequest, SessionUpdateQueueValue } from './types.ts';
+ type PromptContentCandidate = SessionPromptRequest['content'][number] | Extract<SessionUpdateQueueRequest['action'], {
+     readonly kind: 'edit';
+@@ -12,6 +13,16 @@
+  * @returns whether any part supplies ordinary prompt content.
+  */
+ export declare function hasPromptContent(content: readonly PromptContentCandidate[]): boolean;
++export interface SessionCommandInterceptor {
++    handles(sessionId: SessionId): boolean;
++    prompt?(request: SessionPromptRequest, source: MessageSource, next: () => Promise<SessionPromptValue>): Promise<SessionPromptValue>;
++    cancel?(request: SessionCancelRequest, next: () => SessionCancelValue): Promise<SessionCancelValue> | SessionCancelValue;
++}
++declare module '@deepseek-ai/cordis' {
++    interface Context {
++        sessionCommandInterceptor?: SessionCommandInterceptor;
++    }
++}
+ /** Implements Session business commands delegated by the Session Controller Remote service. */
+ export declare class SessionCommandController {
+     private readonly ctx;
+@@ -83,7 +94,7 @@
+      * @param request - Session whose active Agent turn is cancelled.
+      * @returns acknowledgement that cancellation was requested.
+      */
+-    cancel(request: SessionCancelRequest): SessionCancelValue;
++    cancel(request: SessionCancelRequest): SessionCancelValue | Promise<SessionCancelValue>;
+     private resolveAgent;
+     private rejectCreation;
+     private forkWorkspace;
+diff --git a/lib/types/index.d.ts b/lib/types/index.d.ts
+--- a/lib/types/index.d.ts	2026-11-17 14:44:08
++++ b/lib/types/index.d.ts	2026-11-17 14:44:35
+@@ -10,6 +10,7 @@
+ export { ApiSessionNotFound } from './agent.ts';
+ export { SessionFileReferences } from './file-references.ts';
+ export { SessionSkillCatalog } from './skill-catalog.ts';
++export type { SessionCommandInterceptor } from './commands.ts';
+ declare module '@deepseek-ai/cordis' {
+     interface Context {
+         /** Host Session business API and Remote namespace owner. */
+@@ -185,7 +186,7 @@
+      * @param request - Session whose active Agent turn is cancelled.
+      * @returns acknowledgement that cancellation was requested.
+      */
+-    cancel(request: SessionCancelRequest): SessionCancelValue;
++    cancel(request: SessionCancelRequest): SessionCancelValue | Promise<SessionCancelValue>;
+     /**
+      * Read one cold-safe, message-aligned Session history page.
+      * @deprecated Use `events`; this entry point remains for existing Web callers.
+diff --git a/src/commands.ts b/src/commands.ts
+--- a/src/commands.ts	2026-11-17 14:44:08
++++ b/src/commands.ts	2026-11-17 14:44:08
+@@ -84,6 +84,25 @@
+   return boundary
+ }
+ 
++export interface SessionCommandInterceptor {
++  handles(sessionId: SessionId): boolean
++  prompt?(
++    request: SessionPromptRequest,
++    source: MessageSource,
++    next: () => Promise<SessionPromptValue>,
++  ): Promise<SessionPromptValue>
++  cancel?(
++    request: SessionCancelRequest,
++    next: () => SessionCancelValue,
++  ): Promise<SessionCancelValue> | SessionCancelValue
++}
++
++declare module '@deepseek-ai/cordis' {
++  interface Context {
++    sessionCommandInterceptor?: SessionCommandInterceptor
++  }
++}
++
+ /** Implements Session business commands delegated by the Session Controller Remote service. */
+ export class SessionCommandController {
+   /** First-insertion facts cached per exact Session; the log remains the recovery source. */
+@@ -319,6 +338,14 @@
+    * @returns acknowledgement that the Agent accepted the prompt.
+    */
+   async prompt(request: SessionPromptRequest, source: MessageSource): Promise<SessionPromptValue> {
++    const interceptor = this.ctx.get('sessionCommandInterceptor')
++    if (interceptor?.handles(request.sessionId) && interceptor.prompt) {
++      return interceptor.prompt(request, source, () => this.executePrompt(request, source))
++    }
++    return this.executePrompt(request, source)
++  }
++
++  private async executePrompt(request: SessionPromptRequest, source: MessageSource): Promise<SessionPromptValue> {
+     const agent = await this.resolveAgent(request.sessionId)
+     if (this.hasPromptRequest(agent.session, request.requestId)) return { accepted: true }
+     if (request.content.length === 0) {
+@@ -523,7 +550,15 @@
+    * @param request - Session whose active Agent turn is cancelled.
+    * @returns acknowledgement that cancellation was requested.
+    */
+-  cancel(request: SessionCancelRequest): SessionCancelValue {
++  cancel(request: SessionCancelRequest): SessionCancelValue | Promise<SessionCancelValue> {
++    const interceptor = this.ctx.get('sessionCommandInterceptor')
++    if (interceptor?.handles(request.sessionId) && interceptor.cancel) {
++      return interceptor.cancel(request, () => this.executeCancel(request))
++    }
++    return this.executeCancel(request)
++  }
++
++  private executeCancel(request: SessionCancelRequest): SessionCancelValue {
+     const agent = this.ctx.agents.get(request.sessionId)
+     if (agent === undefined) {
+       throw new RemoteError(
+diff --git a/src/index.ts b/src/index.ts
+--- a/src/index.ts	2026-11-17 14:44:08
++++ b/src/index.ts	2026-11-17 14:44:08
+@@ -70,6 +70,7 @@
+ export { ApiSessionNotFound } from './agent.ts'
+ export { SessionFileReferences } from './file-references.ts'
+ export { SessionSkillCatalog } from './skill-catalog.ts'
++export type { SessionCommandInterceptor } from './commands.ts'
+ 
+ declare module '@deepseek-ai/cordis' {
+   interface Context {
+@@ -517,7 +518,7 @@
+    * @returns acknowledgement that cancellation was requested.
+    */
+   @Remote('cancel')
+-  cancel(request: SessionCancelRequest): SessionCancelValue {
++  cancel(request: SessionCancelRequest): SessionCancelValue | Promise<SessionCancelValue> {
+     return this.commands.cancel(request)
+   }
+ 

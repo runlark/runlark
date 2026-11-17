@@ -1,0 +1,5 @@
+- insert:
+    - id: runlark-host-bridge
+      name: "@runlark/dsh-plugin"
+      config:
+        daemonUrl: !!js process.env.RUNLARK_DAEMON_URL || 'http://127.0.0.1:9876'

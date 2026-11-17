@@ -25,5 +25,17 @@ fn test_migrations_fresh_and_idempotent() {
     assert!(tables.contains(&"runs".to_string()));
     assert!(tables.contains(&"commands".to_string()));
     assert!(tables.contains(&"events".to_string()));
+    assert!(tables.contains(&"questions".to_string()));
+    assert!(tables.contains(&"dsh_cursors".to_string()));
     assert!(tables.contains(&"schema_migrations".to_string()));
+
+    let mut mig_stmt = conn
+        .prepare("SELECT version FROM schema_migrations ORDER BY version ASC")
+        .expect("prepare migrations query");
+    let versions: Vec<i64> = mig_stmt
+        .query_map([], |row| row.get(0))
+        .expect("query versions")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("collect versions");
+    assert_eq!(versions, vec![1, 2, 3]);
 }

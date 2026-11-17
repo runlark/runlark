@@ -16,16 +16,16 @@
 
 Один Project, Task, Run, worktree и DSH session.
 
-- [ ] Проверить и зафиксировать версию DSH, реальный Host bridge/controller extension point.
-- [ ] Pure domain + SQLite: команда и назначение сохранены до отправки эффекта.
-- [ ] Реальная сессия в правильном worktree доступна в DSH UI; события обновляют карточку.
-- [ ] Send/Stop/resume/cwd/archive управляемой сессии проходят command layer Rust.
-- [ ] Закрытие браузера не прерывает выполнение.
-- [ ] Отдельный рестарт Rust и DSH не создаёт второй запуск; unknown сверяется.
-- [ ] Вопрос сохраняется и после рестарта восстанавливается либо явно задаётся заново.
-- [ ] Реальные gates Rust/SQLite/DSH/frontend, architecture evidence и failure-path smoke.
+- [x] Проверить и зафиксировать версию DSH, реальный Host bridge/controller extension point.
+- [x] Pure domain + SQLite: команда и назначение сохранены до отправки эффекта.
+- [x] Реальная сессия в правильном worktree доступна в DSH UI; события обновляют карточку.
+- [x] Send/Stop/resume/cwd/archive управляемой сессии проходят command layer Rust.
+- [x] Закрытие браузера не прерывает выполнение.
+- [x] Отдельный рестарт Rust и DSH не создаёт второй запуск; unknown сверяется.
+- [x] Вопрос сохраняется и после рестарта восстанавливается либо явно задаётся заново.
+- [x] Реальные gates Rust/SQLite/DSH/frontend, architecture evidence и failure-path smoke.
 
-Выход: работающий прототип самой рискованной границы, а не имитация агента.
+Выход: A0 завершён — работающий прототип самой рискованной границы (реальный DSH + Rust/SQLite + UI), готовность к A1 (solo alpha).
 
 ## A1 — solo alpha
 

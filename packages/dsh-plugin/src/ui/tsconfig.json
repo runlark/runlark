@@ -1,0 +1,9 @@
+{
+  "extends": "../../../../web/tsconfig.ui.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["../../../../web/src/*"]
+    }
+  },
+  "include": ["./**/*", "../../../../web/src/global/env.d.ts"]
+}

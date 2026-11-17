@@ -7,6 +7,7 @@
     ".local/**",
     ".omp/**",
     ".claude/**",
+    "skills/**",
     "CLAUDE.md",
     // Public Sans license notice, kept verbatim from upstream.
     "docs/brand/brandbook-source/fonts/PublicSans-Notice.md",

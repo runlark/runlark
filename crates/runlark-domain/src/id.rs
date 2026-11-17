@@ -113,6 +113,34 @@ impl AsRef<str> for CommandId {
     }
 }
 
+/// Unique identifier for a human question or approval request.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct QuestionId(pub String);
+
+impl fmt::Display for QuestionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<&str> for QuestionId {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<String> for QuestionId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl AsRef<str> for QuestionId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
 /// Optimistic concurrency control revision number.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default,

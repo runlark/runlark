@@ -1,4 +1,4 @@
-use runlark_domain::{CommandId, RunId, SessionId};
+use runlark_domain::{CommandId, QuestionId, RunId, SessionId, TransitionError};
 use thiserror::Error;
 
 /// Storage and persistence errors for local `SQLite` operations.
@@ -10,6 +10,9 @@ pub enum StorageError {
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
+    #[error("Domain transition error: {0}")]
+    Transition(#[from] TransitionError),
+
     #[error("Command payload conflict: command {0} exists with differing payload")]
     CommandPayloadConflict(CommandId),
 
@@ -18,6 +21,9 @@ pub enum StorageError {
 
     #[error("Run not found: {0}")]
     RunNotFound(RunId),
+
+    #[error("Question not found: {0}")]
+    QuestionNotFound(QuestionId),
 
     #[error("Invalid storage state: {0}")]
     InvalidState(String),

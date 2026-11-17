@@ -1,4 +1,4 @@
-use crate::id::{CommandId, EventSeq, Revision, RunId, SessionId, Timestamp};
+use crate::id::{CommandId, EventSeq, QuestionId, Revision, RunId, SessionId, Timestamp};
 use serde::{Deserialize, Serialize};
 
 /// Command to send a user prompt to a session.
@@ -55,6 +55,18 @@ pub struct ArchiveSessionCommand {
     pub created_at: Timestamp,
 }
 
+/// Command to answer a pending human question or approval request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnswerQuestionCommand {
+    pub command_id: CommandId,
+    pub session_id: SessionId,
+    pub run_id: RunId,
+    pub question_id: QuestionId,
+    pub answer: String,
+    pub expected_revision: Revision,
+    pub created_at: Timestamp,
+}
+
 /// Enum of all managed session commands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
@@ -64,6 +76,7 @@ pub enum SessionCommand {
     ResumeSession(ResumeSessionCommand),
     ChangeCwd(ChangeCwdCommand),
     ArchiveSession(ArchiveSessionCommand),
+    AnswerQuestion(AnswerQuestionCommand),
 }
 
 impl SessionCommand {
@@ -75,6 +88,7 @@ impl SessionCommand {
             Self::ResumeSession(c) => &c.command_id,
             Self::ChangeCwd(c) => &c.command_id,
             Self::ArchiveSession(c) => &c.command_id,
+            Self::AnswerQuestion(c) => &c.command_id,
         }
     }
 
@@ -86,6 +100,7 @@ impl SessionCommand {
             Self::ResumeSession(c) => &c.session_id,
             Self::ChangeCwd(c) => &c.session_id,
             Self::ArchiveSession(c) => &c.session_id,
+            Self::AnswerQuestion(c) => &c.session_id,
         }
     }
 
@@ -97,6 +112,7 @@ impl SessionCommand {
             Self::ResumeSession(c) => &c.run_id,
             Self::ChangeCwd(c) => &c.run_id,
             Self::ArchiveSession(c) => &c.run_id,
+            Self::AnswerQuestion(c) => &c.run_id,
         }
     }
 
@@ -108,6 +124,7 @@ impl SessionCommand {
             Self::ResumeSession(c) => c.expected_revision,
             Self::ChangeCwd(c) => c.expected_revision,
             Self::ArchiveSession(c) => c.expected_revision,
+            Self::AnswerQuestion(c) => c.expected_revision,
         }
     }
 }

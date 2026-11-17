@@ -1,4 +1,4 @@
-use crate::id::{CommandId, EventSeq, RunId, SessionId, Timestamp};
+use crate::id::{CommandId, EventSeq, QuestionId, RunId, SessionId, Timestamp};
 use serde::{Deserialize, Serialize};
 
 /// Immutable recorded facts within a workflow session.
@@ -19,6 +19,22 @@ pub enum DomainEvent {
         run_id: RunId,
         command_id: CommandId,
         prompt: String,
+        timestamp: Timestamp,
+    },
+    QuestionAsked {
+        question_id: QuestionId,
+        session_id: SessionId,
+        run_id: RunId,
+        prompt: String,
+        options: Vec<String>,
+        timestamp: Timestamp,
+    },
+    QuestionAnswered {
+        question_id: QuestionId,
+        session_id: SessionId,
+        run_id: RunId,
+        command_id: CommandId,
+        answer: String,
         timestamp: Timestamp,
     },
     RunCancelRequested {

@@ -1,9 +1,11 @@
 /node_modules/
 /target/
+/packages/dsh-plugin/dist/
 /.reports/
 /.local/
 /.omx/
 /.ruff_cache/
+/skills/
 .env
 .env.*
 !.env.example
