@@ -21,25 +21,40 @@ fn handle_send_prompt(
     cmd: &SendPromptCommand,
     now: Timestamp,
 ) -> Result<TransitionOutcome, TransitionError> {
-    if let Some(run) = active_run
-        && run.status == RunStatus::CancelRequested
-    {
-        return Err(TransitionError::RunCancelling);
+    if let Some(run) = active_run {
+        if run.status == RunStatus::CancelRequested {
+            return Err(TransitionError::RunCancelling);
+        }
+        if matches!(
+            run.status,
+            RunStatus::Stopped | RunStatus::Completed | RunStatus::Failed
+        ) && run.id == cmd.run_id
+        {
+            return Err(TransitionError::RunAlreadyTerminated);
+        }
     }
 
     let mut next_session = session.clone();
     next_session.current_revision = Revision(session.current_revision.0 + 1);
     next_session.updated_at = now;
 
-    let mut run = active_run.cloned().unwrap_or_else(|| Run {
-        id: cmd.run_id.clone(),
-        session_id: cmd.session_id.clone(),
-        status: RunStatus::Queued,
-        worktree_path: session.cwd.clone(),
-        revision: Revision(1),
-        created_at: now,
-        updated_at: now,
-    });
+    let mut run = active_run
+        .filter(|r| {
+            !matches!(
+                r.status,
+                RunStatus::Stopped | RunStatus::Completed | RunStatus::Failed
+            )
+        })
+        .cloned()
+        .unwrap_or_else(|| Run {
+            id: cmd.run_id.clone(),
+            session_id: session.id.clone(),
+            status: RunStatus::Queued,
+            worktree_path: session.cwd.clone(),
+            revision: Revision(1),
+            created_at: now,
+            updated_at: now,
+        });
     run.status = RunStatus::Running;
     run.updated_at = now;
     next_session.active_run_id = Some(run.id.clone());
@@ -84,9 +99,9 @@ fn handle_stop_run(
 
     Ok(TransitionOutcome {
         new_session: next_session,
-        new_run: Some(next_run),
+        new_run: Some(next_run.clone()),
         events: vec![DomainEvent::RunCancelRequested {
-            run_id: cmd.run_id.clone(),
+            run_id: next_run.id,
             command_id: cmd.command_id.clone(),
             reason: cmd.reason.clone(),
             timestamp: now,
@@ -112,16 +127,22 @@ fn handle_resume_session(
         r.updated_at = now;
     }
 
-    TransitionOutcome {
-        new_session: next_session,
-        new_run: next_run,
-        events: vec![DomainEvent::SessionResumed {
-            session_id: cmd.session_id.clone(),
-            run_id: cmd.run_id.clone(),
+    let events = next_run
+        .as_ref()
+        .map(|run| DomainEvent::SessionResumed {
+            session_id: session.id.clone(),
+            run_id: run.id.clone(),
             command_id: cmd.command_id.clone(),
             after_seq: cmd.after_seq,
             timestamp: now,
-        }],
+        })
+        .into_iter()
+        .collect();
+
+    TransitionOutcome {
+        new_session: next_session,
+        new_run: next_run,
+        events,
     }
 }
 
@@ -156,7 +177,7 @@ fn handle_change_cwd(
         new_session: next_session,
         new_run: active_run.cloned(),
         events: vec![DomainEvent::CwdChanged {
-            session_id: cmd.session_id.clone(),
+            session_id: session.id.clone(),
             new_cwd: cmd.new_cwd.clone(),
             timestamp: now,
         }],
@@ -166,7 +187,7 @@ fn handle_change_cwd(
 fn handle_archive_session(
     session: &Session,
     active_run: Option<&Run>,
-    cmd: &ArchiveSessionCommand,
+    _cmd: &ArchiveSessionCommand,
     now: Timestamp,
 ) -> Result<TransitionOutcome, TransitionError> {
     if let Some(run) = active_run
@@ -185,7 +206,7 @@ fn handle_archive_session(
         new_session: next_session,
         new_run: None,
         events: vec![DomainEvent::SessionArchived {
-            session_id: cmd.session_id.clone(),
+            session_id: session.id.clone(),
             timestamp: now,
         }],
     })
@@ -194,13 +215,20 @@ fn handle_archive_session(
 /// Applies a command to the current session and run state in a pure, deterministic manner.
 ///
 /// # Errors
-/// Returns `TransitionError` if the command violates state constraints or revision preconditions.
+/// Returns `TransitionError` if the command violates state constraints, session identity,
+/// or revision preconditions.
 pub fn transition(
     session: &Session,
     active_run: Option<&Run>,
     command: &SessionCommand,
     now: Timestamp,
 ) -> Result<TransitionOutcome, TransitionError> {
+    if command.session_id() != &session.id {
+        return Err(TransitionError::SessionMismatch {
+            expected: session.id.clone(),
+            actual: command.session_id().clone(),
+        });
+    }
     if session.status == SessionStatus::Archived {
         return Err(TransitionError::SessionAlreadyArchived);
     }

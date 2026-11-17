@@ -38,7 +38,12 @@ export class DaemonClient {
         return { ok: false, error: `Daemon error (${res.status}): ${text}` };
       }
 
-      const body = (await res.json()) as { command_id: string; status: string };
+      let body: { command_id: string; status: string };
+      try {
+        body = (await res.json()) as { command_id: string; status: string };
+      } catch {
+        return { ok: false, error: `Invalid response body (${res.status})` };
+      }
       return { ok: true, command_id: body.command_id, status: body.status };
     } catch (err) {
       return { ok: false, error: `Network error: ${String(err)}` };

@@ -1,4 +1,4 @@
-use crate::id::Revision;
+use crate::id::{Revision, SessionId};
 use thiserror::Error;
 
 /// Errors arising from invalid state transitions.
@@ -6,6 +6,12 @@ use thiserror::Error;
 pub enum TransitionError {
     #[error("Session is already archived")]
     SessionAlreadyArchived,
+
+    #[error("Session mismatch: expected {expected}, got {actual}")]
+    SessionMismatch {
+        expected: SessionId,
+        actual: SessionId,
+    },
 
     #[error("Revision mismatch: expected {expected}, actual {actual}")]
     RevisionMismatch {

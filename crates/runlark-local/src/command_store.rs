@@ -1,7 +1,7 @@
 use crate::connection::{from_sql_i64, to_sql_i64};
 use crate::error::StorageError;
 use runlark_domain::{CommandId, Revision, RunId, SessionCommand, SessionId, Timestamp};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use sha2::{Digest, Sha256};
 
 /// Result of persisting a command intent.
@@ -56,7 +56,7 @@ impl CommandStore {
         let payload_json = serde_json::to_string(command)?;
         let payload_hash = Self::compute_hash(&payload_json);
 
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
         let existing: Option<(String, String)> = tx
             .query_row(

@@ -231,4 +231,57 @@ fn test_resume_session_recovers_interrupted_run() {
         }
         other => panic!("expected SessionResumed, got {other:?}"),
     }
+
+    // Resuming without an active run must not emit SessionResumed for a non-existent run
+    let no_run_outcome =
+        transition(&session, None, &cmd, Timestamp(2100)).expect("resume without run succeeds");
+    assert!(no_run_outcome.new_run.is_none());
+    assert!(no_run_outcome.events.is_empty());
+}
+
+#[test]
+fn test_session_mismatch_and_terminal_run_guards() {
+    let session = sample_session();
+    let wrong_session_cmd = SessionCommand::ArchiveSession(ArchiveSessionCommand {
+        command_id: CommandId::from("cmd_wrong_sess"),
+        session_id: SessionId::from("sess_other"),
+        run_id: RunId::from("run_none"),
+        expected_revision: Revision(1),
+        created_at: Timestamp(2000),
+    });
+    assert_eq!(
+        transition(&session, None, &wrong_session_cmd, Timestamp(2000)).unwrap_err(),
+        TransitionError::SessionMismatch {
+            expected: SessionId::from("sess_1"),
+            actual: SessionId::from("sess_other"),
+        }
+    );
+
+    let terminal_run = Run {
+        id: RunId::from("run_done"),
+        session_id: session.id.clone(),
+        status: RunStatus::Completed,
+        worktree_path: "/workspace".to_string(),
+        revision: Revision(1),
+        created_at: Timestamp(1000),
+        updated_at: Timestamp(1500),
+    };
+    let reuse_terminal_cmd = SessionCommand::SendPrompt(SendPromptCommand {
+        command_id: CommandId::from("cmd_reuse"),
+        session_id: session.id.clone(),
+        run_id: RunId::from("run_done"),
+        prompt: "Cannot revive".to_string(),
+        expected_revision: Revision(1),
+        created_at: Timestamp(2000),
+    });
+    assert_eq!(
+        transition(
+            &session,
+            Some(&terminal_run),
+            &reuse_terminal_cmd,
+            Timestamp(2000)
+        )
+        .unwrap_err(),
+        TransitionError::RunAlreadyTerminated
+    );
 }
