@@ -47,7 +47,9 @@ export class DaemonClient {
 
   async getEvents(runId: string, afterSeq?: number): Promise<DaemonEventItem[]> {
     const query = afterSeq !== undefined ? `?after_seq=${afterSeq}` : "";
-    const res = await fetch(`${this.baseUrl}/api/v1/runs/${runId}/events${query}`);
+    const res = await fetch(
+      `${this.baseUrl}/api/v1/runs/${encodeURIComponent(runId)}/events${query}`,
+    );
     if (!res.ok) {
       throw new Error(`Failed to fetch events (${res.status}): ${await res.text()}`);
     }

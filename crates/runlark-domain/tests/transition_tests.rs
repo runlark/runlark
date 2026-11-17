@@ -1,7 +1,8 @@
 use runlark_domain::{
-    ArchiveSessionCommand, ChangeCwdCommand, CommandId, DomainEvent, ResumeSessionCommand,
-    Revision, Run, RunId, RunStatus, SendPromptCommand, Session, SessionCommand, SessionId,
-    SessionStatus, StopRunCommand, TaskId, Timestamp, TransitionError, transition,
+    ArchiveSessionCommand, ChangeCwdCommand, CommandId, DomainEvent, EventSeq,
+    ResumeSessionCommand, Revision, Run, RunId, RunStatus, SendPromptCommand, Session,
+    SessionCommand, SessionId, SessionStatus, StopRunCommand, TaskId, Timestamp, TransitionError,
+    transition,
 };
 
 fn sample_session() -> Session {
@@ -195,7 +196,7 @@ fn test_resume_session_recovers_interrupted_run() {
         command_id: CommandId::from("cmd_resume"),
         session_id: session.id.clone(),
         run_id: RunId::from("run_1"),
-        after_seq: None,
+        after_seq: Some(EventSeq(5)),
         expected_revision: Revision(1),
         created_at: Timestamp(2000),
     });
@@ -203,6 +204,17 @@ fn test_resume_session_recovers_interrupted_run() {
     let outcome = transition(&session, Some(&interrupted_run), &cmd, Timestamp(2000))
         .expect("resume should succeed");
 
+    assert_eq!(outcome.new_session.current_revision, Revision(2));
     let run = outcome.new_run.expect("run should be present");
     assert_eq!(run.status, RunStatus::Running);
+    assert_eq!(outcome.events.len(), 1);
+    match &outcome.events[0] {
+        DomainEvent::SessionResumed {
+            run_id, after_seq, ..
+        } => {
+            assert_eq!(run_id, &RunId::from("run_1"));
+            assert_eq!(*after_seq, Some(EventSeq(5)));
+        }
+        other => panic!("expected SessionResumed, got {other:?}"),
+    }
 }

@@ -94,3 +94,23 @@ test("cancel records StopRun command prior to signaling stop to agent loop", asy
   assert.equal(nextCalled, true);
   assert.equal(cancelResult.cancelled, true);
 });
+
+test("cancel addresses StopRun to the active runId recorded by prompt", async () => {
+  const client = new MockDaemonClient();
+  const interceptor = new RunlarkSessionInterceptor(client, new Set(["sess_custom"]));
+
+  await interceptor.prompt(
+    { sessionId: "sess_custom", runId: "custom_run_42", prompt: "Start run" },
+    "user",
+    async () => ({ turnId: "turn_1" }),
+  );
+
+  await interceptor.cancel({ sessionId: "sess_custom", reason: "Stop custom" }, () => ({
+    cancelled: true,
+  }));
+
+  assert.equal(client.submittedCommands.length, 2);
+  assert.equal(client.submittedCommands[0].payload.run_id, "custom_run_42");
+  assert.equal(client.submittedCommands[1].type, "StopRun");
+  assert.equal(client.submittedCommands[1].payload.run_id, "custom_run_42");
+});

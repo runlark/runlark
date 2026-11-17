@@ -62,3 +62,33 @@ test("StreamReconnector catches up on missed events after browser reconnects", a
   assert.equal(count3, 0);
   assert.equal(received.length, 5);
 });
+
+test("StreamReconnector does not advance lastSeq if onEvent throws", async () => {
+  const client = new MockEventDaemonClient();
+  client.eventLog = [
+    { seq: 1, event_type: "PromptEnqueued", payload: { prompt: "P1" }, created_at: 100 },
+    { seq: 2, event_type: "RunCreated", payload: { worktree: "/w" }, created_at: 110 },
+  ];
+
+  const reconnector = new StreamReconnector(client, "run_err", 0);
+  const delivered: number[] = [];
+
+  await assert.rejects(async () => {
+    await reconnector.reconnectAndCatchUp((event) => {
+      if (event.seq === 2) {
+        throw new Error("transient UI error");
+      }
+      delivered.push(event.seq);
+    });
+  }, /transient UI error/);
+
+  assert.equal(reconnector.getLastSeq(), 1);
+  assert.deepEqual(delivered, [1]);
+
+  const retried = await reconnector.reconnectAndCatchUp((event) => {
+    delivered.push(event.seq);
+  });
+  assert.equal(retried, 1);
+  assert.equal(reconnector.getLastSeq(), 2);
+  assert.deepEqual(delivered, [1, 2]);
+});

@@ -90,6 +90,21 @@ fn test_persist_intent_idempotency_and_conflict() {
         .expect("fetch cmd")
         .expect("found");
     assert_eq!(fetched_acked.status, "acked");
+
+    // 5. Missing command_id returns InvalidState instead of silent Ok(())
+    let missing_id = CommandId::from("cmd_missing");
+    assert!(matches!(
+        CommandStore::mark_dispatched(&conn, &missing_id, Timestamp(1200)),
+        Err(StorageError::InvalidState(_))
+    ));
+    assert!(matches!(
+        CommandStore::mark_acked(&conn, &missing_id, Timestamp(1200)),
+        Err(StorageError::InvalidState(_))
+    ));
+    assert!(matches!(
+        CommandStore::mark_failed(&conn, &missing_id, "err", Timestamp(1200)),
+        Err(StorageError::InvalidState(_))
+    ));
 }
 
 #[test]

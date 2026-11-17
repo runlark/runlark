@@ -22,8 +22,8 @@ export class StreamReconnector {
 
     for (const event of events) {
       if (event.seq > this.lastSeq) {
-        this.lastSeq = event.seq;
         onEvent(event);
+        this.lastSeq = event.seq;
         caughtUp += 1;
       }
     }

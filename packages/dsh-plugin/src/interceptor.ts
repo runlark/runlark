@@ -11,6 +11,7 @@ import type {
 export class RunlarkSessionInterceptor implements SessionCommandInterceptor {
   private readonly client: DaemonClient;
   private readonly managedSessions: Set<string>;
+  private readonly activeRunIds = new Map<string, string>();
 
   constructor(client: DaemonClient, managedSessions: Set<string>) {
     this.client = client;
@@ -54,6 +55,8 @@ export class RunlarkSessionInterceptor implements SessionCommandInterceptor {
       throw new Error(`Persist-before-send failed: ${persistResult.error}`);
     }
 
+    this.activeRunIds.set(request.sessionId, runId);
+
     // 2. Dispatch effect to DSH agent loop
     return await next();
   }
@@ -63,7 +66,7 @@ export class RunlarkSessionInterceptor implements SessionCommandInterceptor {
     next: () => SessionCancelValue,
   ): Promise<SessionCancelValue> {
     const commandId = crypto.randomUUID();
-    const runId = `run_${request.sessionId}`;
+    const runId = this.activeRunIds.get(request.sessionId) ?? `run_${request.sessionId}`;
 
     // 1. Record intent to cancel before stopping loop
     const persistResult = await this.client.submitCommand({

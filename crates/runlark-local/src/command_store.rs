@@ -105,53 +105,65 @@ impl CommandStore {
         Ok(PersistOutcome::Inserted)
     }
 
+    fn ensure_updated(affected: usize, command_id: &CommandId) -> Result<(), StorageError> {
+        if affected == 0 {
+            return Err(StorageError::InvalidState(format!(
+                "command not found: {command_id}"
+            )));
+        }
+        Ok(())
+    }
+
     /// Marks a command as dispatched.
     ///
     /// # Errors
-    /// Returns `StorageError` if SQL update fails.
+    /// Returns `StorageError::InvalidState` if the command does not exist,
+    /// or `StorageError::Sqlite` if SQL update fails.
     pub fn mark_dispatched(
         conn: &Connection,
         command_id: &CommandId,
         now: Timestamp,
     ) -> Result<(), StorageError> {
-        conn.execute(
+        let affected = conn.execute(
             "UPDATE commands SET status = 'dispatched', dispatch_attempts = dispatch_attempts + 1, updated_at = ?2 WHERE command_id = ?1",
             params![command_id.as_ref(), to_sql_i64(now.0)],
         )?;
-        Ok(())
+        Self::ensure_updated(affected, command_id)
     }
 
     /// Marks a command as acknowledged.
     ///
     /// # Errors
-    /// Returns `StorageError` if SQL update fails.
+    /// Returns `StorageError::InvalidState` if the command does not exist,
+    /// or `StorageError::Sqlite` if SQL update fails.
     pub fn mark_acked(
         conn: &Connection,
         command_id: &CommandId,
         now: Timestamp,
     ) -> Result<(), StorageError> {
-        conn.execute(
+        let affected = conn.execute(
             "UPDATE commands SET status = 'acked', updated_at = ?2 WHERE command_id = ?1",
             params![command_id.as_ref(), to_sql_i64(now.0)],
         )?;
-        Ok(())
+        Self::ensure_updated(affected, command_id)
     }
 
     /// Marks a command as failed with an error message.
     ///
     /// # Errors
-    /// Returns `StorageError` if SQL update fails.
+    /// Returns `StorageError::InvalidState` if the command does not exist,
+    /// or `StorageError::Sqlite` if SQL update fails.
     pub fn mark_failed(
         conn: &Connection,
         command_id: &CommandId,
         error: &str,
         now: Timestamp,
     ) -> Result<(), StorageError> {
-        conn.execute(
+        let affected = conn.execute(
             "UPDATE commands SET status = 'failed', error_message = ?2, updated_at = ?3 WHERE command_id = ?1",
             params![command_id.as_ref(), error, to_sql_i64(now.0)],
         )?;
-        Ok(())
+        Self::ensure_updated(affected, command_id)
     }
 
     /// Fetches a persisted command by its ID.

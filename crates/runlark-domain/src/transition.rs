@@ -47,9 +47,9 @@ fn handle_send_prompt(
 
     Ok(TransitionOutcome {
         new_session: next_session,
-        new_run: Some(run),
+        new_run: Some(run.clone()),
         events: vec![DomainEvent::PromptEnqueued {
-            run_id: cmd.run_id.clone(),
+            run_id: run.id,
             command_id: cmd.command_id.clone(),
             prompt: cmd.prompt.clone(),
             timestamp: now,
@@ -96,7 +96,7 @@ fn handle_stop_run(
 fn handle_resume_session(
     session: &Session,
     active_run: Option<&Run>,
-    _cmd: &ResumeSessionCommand,
+    cmd: &ResumeSessionCommand,
     now: Timestamp,
 ) -> TransitionOutcome {
     let mut next_session = session.clone();
@@ -114,7 +114,13 @@ fn handle_resume_session(
     TransitionOutcome {
         new_session: next_session,
         new_run: next_run,
-        events: vec![],
+        events: vec![DomainEvent::SessionResumed {
+            session_id: cmd.session_id.clone(),
+            run_id: cmd.run_id.clone(),
+            command_id: cmd.command_id.clone(),
+            after_seq: cmd.after_seq,
+            timestamp: now,
+        }],
     }
 }
 
