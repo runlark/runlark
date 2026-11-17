@@ -184,7 +184,9 @@ impl DshSubscriber {
                     );
                     tokio::select! {
                         () = tokio::time::sleep(backoff) => {}
-                        Some(_) = pipeline_tasks.join_next(), if !pipeline_tasks.is_empty() => {}
+                        Some(res) = pipeline_tasks.join_next(), if !pipeline_tasks.is_empty() => {
+                            log_pipeline_join_result(res);
+                        }
                         changed = shutdown.changed() => {
                             if changed.is_err() || *shutdown.borrow() {
                                 break;
@@ -284,7 +286,9 @@ impl DshSubscriber {
                         return Ok(());
                     }
                 }
-                Some(_) = pipeline_tasks.join_next(), if !pipeline_tasks.is_empty() => {}
+                Some(res) = pipeline_tasks.join_next(), if !pipeline_tasks.is_empty() => {
+                    log_pipeline_join_result(res);
+                }
                 frame = read.next() => {
                     match frame {
                         Some(Ok(Message::Text(text))) => {
@@ -444,7 +448,9 @@ impl DshSubscriber {
                 && run.task_id.is_some()
                 && !run.status.is_terminal()
             {
-                while pipeline_tasks.try_join_next().is_some() {}
+                while let Some(res) = pipeline_tasks.try_join_next() {
+                    log_pipeline_join_result(res);
+                }
                 let state = self.state.clone();
                 pipeline_tasks.spawn(async move {
                     if let Err(err) = crate::repair::WorkflowPipeline::on_dsh_turn_ended(
@@ -465,14 +471,18 @@ impl DshSubscriber {
     }
 }
 
+fn log_pipeline_join_result(res: Result<(), tokio::task::JoinError>) {
+    if let Err(err) = res
+        && !err.is_cancelled()
+    {
+        tracing::warn!("workflow pipeline task join error: {err}");
+    }
+}
+
 async fn drain_pipeline_tasks(tasks: &mut tokio::task::JoinSet<()>) {
     let drain = async {
         while let Some(res) = tasks.join_next().await {
-            if let Err(err) = res
-                && !err.is_cancelled()
-            {
-                tracing::warn!("workflow pipeline task join error: {err}");
-            }
+            log_pipeline_join_result(res);
         }
     };
     if tokio::time::timeout(Duration::from_secs(2), drain)
