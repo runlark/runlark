@@ -1,4 +1,5 @@
 use crate::id::{Revision, RunId, SessionId};
+use crate::task::{TaskStage, WorkflowStage};
 use thiserror::Error;
 
 /// Errors arising from invalid state transitions.
@@ -42,6 +43,47 @@ pub enum TransitionError {
 
     #[error("Cannot archive session while a run is active")]
     ArchiveBlockedByActiveRun,
+
+    #[error("Invalid task stage transition from {from:?} to {to:?}: {reason}")]
+    InvalidTaskStageTransition {
+        from: TaskStage,
+        to: TaskStage,
+        reason: String,
+    },
+
+    #[error("Invalid workflow stage transition from {from:?} to {to:?}")]
+    InvalidWorkflowStageTransition {
+        from: WorkflowStage,
+        to: WorkflowStage,
+    },
+
+    #[error("Agents cannot self-accept tasks or move tasks to Done")]
+    AgentCannotSelfAccept,
+
+    #[error("Human Decision::Accept is required before moving a task to Done")]
+    AcceptanceDecisionRequired,
+
+    #[error("Task has an active executing run ({run_id})")]
+    TaskHasActiveRun { run_id: RunId },
+
+    #[error("Missing decision binding field: {field}")]
+    MissingDecisionBinding { field: String },
+
+    #[error("Decision binding mismatch for {field}: expected {expected}, actual {actual}")]
+    DecisionBindingMismatch {
+        field: String,
+        expected: String,
+        actual: String,
+    },
+
+    #[error("Budget exceeded: {reason}")]
+    BudgetExceeded { reason: String },
+
+    #[error("Repair blocked by {unknown_attempts} unpriced attempt(s) with unknown cost")]
+    UnknownCostBlocked { unknown_attempts: u32 },
+
+    #[error("Invalid run state: {0}")]
+    InvalidRunState(String),
 }
 
 /// Generic domain-level error.
@@ -52,4 +94,7 @@ pub enum DomainError {
 
     #[error("Invalid entity state: {0}")]
     InvalidState(String),
+
+    #[error("Invalid SHA-256 artifact digest: {0}")]
+    InvalidDigest(String),
 }

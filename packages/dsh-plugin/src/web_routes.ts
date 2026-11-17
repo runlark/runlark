@@ -3,7 +3,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { brandString } from "@deepseek-ai/dsh-brand";
 import { SessionId as brandSessionId } from "@deepseek-ai/dsh-session";
 import type { DaemonClient } from "./daemon_client.ts";
+import { DaemonBoardClient } from "./daemon_board_client.ts";
 import type { OutboxDispatchRequest, SessionRequestId } from "./types.ts";
+import { handleRunlarkBoardWebRequest } from "./web_board_routes.ts";
 
 export interface WebBridgeTarget {
   ensureManagedSession(opts: { sessionId: string; taskId: string; cwd: string }): Promise<unknown>;
@@ -210,9 +212,29 @@ export async function handleRunlarkWebRequest(
       return;
     }
 
+    if (
+      await handleRunlarkBoardWebRequest(
+        req,
+        res,
+        new DaemonBoardClient(client.getBaseUrl()),
+        readJsonBody,
+        sendJson,
+        reqAbort.signal,
+      )
+    ) {
+      return;
+    }
+
     sendJson(res, 404, { error: "not_found", message: `Unknown route: ${method} ${path}` });
   } catch (error) {
     if (reqAbort.signal.aborted || res.writableEnded) {
+      return;
+    }
+    if (error instanceof SyntaxError) {
+      sendJson(res, 400, {
+        error: "invalid_json",
+        message: error.message,
+      });
       return;
     }
     sendJson(res, 500, {

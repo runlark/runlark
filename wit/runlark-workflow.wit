@@ -1,0 +1,91 @@
+package runlark:workflow@0.1.0;
+
+/// Shared workflow stages, capability declarations, and validation evidence types.
+interface types {
+  /// Ordered stages of a Runlark solo workflow.
+  enum workflow-stage {
+    clarify,
+    plan,
+    implement,
+    validate,
+    human-accept,
+  }
+
+  /// Least-privilege capabilities a workflow package or validator may request.
+  enum capability {
+    log,
+    read-diff,
+    read-checks,
+  }
+
+  /// Allowed transition between workflow stages with a bounded attempt budget.
+  record stage-transition {
+    from-stage: workflow-stage,
+    to-stage: workflow-stage,
+    max-attempts: u32,
+  }
+
+  /// Evidence from a single local check or test execution.
+  record check-evidence {
+    name: string,
+    passed: bool,
+    exit-code: s32,
+  }
+
+  /// Input passed from the Runlark host to the WASM validator.
+  record validation-input {
+    task-id: string,
+    run-id: string,
+    stage: workflow-stage,
+    changed-files: list<string>,
+    checks: list<check-evidence>,
+    diff-bytes: u64,
+    repair-attempt: u32,
+  }
+
+  /// Overall pass/fail verdict produced by the validator.
+  enum verdict {
+    pass,
+    fail,
+  }
+
+  /// Structured validation result returned to the Runlark host.
+  record validation-result {
+    verdict: verdict,
+    summary: string,
+    findings: list<string>,
+  }
+}
+
+/// Declarative workflow planning and stage-transition contract.
+interface planning {
+  use types.{capability, stage-transition, workflow-stage};
+
+  record workflow-plan {
+    stages: list<workflow-stage>,
+    transitions: list<stage-transition>,
+    required-capabilities: list<capability>,
+  }
+
+  plan-workflow: func(task-id: string) -> result<workflow-plan, string>;
+}
+
+/// Check and evidence validation interface executed before human acceptance.
+interface validator {
+  use types.{validation-input, validation-result};
+
+  validate-run: func(input: validation-input) -> result<validation-result, string>;
+}
+
+/// Minimal host/guest world for bounded, capability-restricted run validators.
+world workflow-validator {
+  import log: func(level: string, message: string);
+  export validator;
+}
+
+/// Extended world combining planning and validation contracts.
+world workflow-package {
+  import log: func(level: string, message: string);
+  export planning;
+  export validator;
+}

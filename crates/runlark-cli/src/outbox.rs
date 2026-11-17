@@ -393,7 +393,18 @@ impl OutboxDispatcher {
 
     fn load_candidates(&self) -> Result<Vec<PersistedCommand>, StorageError> {
         let conn = open_sqlite(&self.db_path)?;
-        CommandStore::list_dispatchable_commands(&conn)
+        let cmds = CommandStore::list_dispatchable_commands(&conn)?;
+        let mut ready = Vec::with_capacity(cmds.len());
+        for cmd in cmds {
+            if cmd.command_type == "send_prompt"
+                && SessionStore::get_run(&conn, &cmd.run_id)?
+                    .is_some_and(|r| r.status == runlark_domain::RunStatus::Queued)
+            {
+                continue;
+            }
+            ready.push(cmd);
+        }
+        Ok(ready)
     }
 
     fn begin_dispatch(

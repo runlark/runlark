@@ -290,7 +290,9 @@ test("compiled DSH client bundle mounts right-sidebar card, streams live events,
         });
 
         await cordis.plugin(clientPlugin);
-        assert.equal(registeredTabs.length, 1);
+        assert.equal(registeredTabs.length, 2);
+        assert.ok(registeredTabs.some((t) => t.kind === "runlark"));
+        assert.ok(registeredTabs.some((t) => t.kind === "runlark-board"));
         assert.ok(registeredSlots.some((s) => s.name === "sidebar.right.pane.tab"));
         assert.ok(registeredSlots.some((s) => s.name === "sidebar.right.pane.tab.title"));
 

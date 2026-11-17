@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Реализован фундамент и сквозной вертикальный срез A1 (solo alpha):
+  - Расширен `runlark-domain` и `runlark-local` (миграция `0004_a1_board_and_history.sql`, `Project`, `Task`, `Attempt`, `Decision`, `BudgetPolicy`, `CostSummary`, `BoardCommand`, CAS-хранилище артефактов `ArtifactCasStore`, проекция доски `BoardProjection`, FIFO-очередь и восстановление после рестарта).
+  - Добавлен WASM host `crates/runlark-wasm`, контракт `wit/runlark-workflow.wit` и first-party workflow-пакет `workflows/solo-default` (manifest, declarative stages, WASM validator с digest pinning, ограничениями fuel/memory и изоляцией capabilities).
+  - Реализованы 2-слотовый `Scheduler` с отдельными git worktrees на каждый активный run, ограниченный repair loop с бюджетами и явной `UnknownCost`, привязанная человеческая приёмка и создание PR (`git push` + `gh pr create`), единый парсер/диспетчер чат-команд `/task`, `/fix`, `/plan`, `/run`, `/stop`, `/resume`, `/answer`, `/accept`, `/reject`, `/pr`, `/status`, `/board`, `/budget`, полноценный CLI (`project`, `task`, `run`, `question`, `chat`, `plugin`) и HTTP API `/api/v1/*`.
+  - В `packages/dsh-plugin` добавлены proxy-маршруты `/api/runlark/{board,projects,tasks,chat,runs,plugins}`, инструмент `runlark_chat_command`, `UsageBridge` (явно сохраняющий отсутствующую стоимость как `null` `UnknownCost`) и регистрация вкладки `Runlark Board` в DSH right-sidebar/dockkit.
+  - В `web/` реализована полная канбан-доска (5 колонок, drag-and-drop + доступное меню Move, фильтры, диалог создания задачи) и экран задачи (уточнение, план, попытки/бюджет, diff/артефакты CAS, приёмка/PR, живые события и slash-чат) по контракту `web/DESIGN.md` с desktop/mobile адаптацией, keyboard accessibility и RU/EN i18n.
+  - Добавлены UI-тесты (`scripts/ui-board.test.mjs`) и сквозной A1 smoke (`scripts/smoke-a1.mjs`), интегрированный в `scripts/smoke.mjs`.
 - Завершён этап A0: управляемая DSH-сессия и локальный durable run готовы к переходу к A1 (solo alpha).
 - Реализован durable command layer и outbox-диспетчер (`crates/runlark-cli`, `crates/runlark-local`): атомарное сохранение намерения в SQLite до внешнего эффекта (`pending -> dispatched -> acked | failed`), ретраи со сбросом `error_message`, сохранение `unknown` (504/таймаут) до сверки, идемпотентность и 409 при конфликте payload или `expected_revision`.
 - Реализовано управление изолированными git worktrees (`$WORKSPACE/.runlark/worktrees/<run_id>`) и CWD confinement для запускаемых сессий.

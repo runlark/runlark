@@ -5,10 +5,13 @@ import { SessionId as brandSessionId } from "@deepseek-ai/dsh-session";
 import type { SessionCommandInterceptor } from "@deepseek-ai/dsh-api-session-controller";
 import type {} from "@deepseek-ai/dsh-host-webserver";
 import type {} from "@deepseek-ai/dsh-workspace";
+import { DaemonBoardClient } from "./daemon_board_client.ts";
 import type { DaemonClient } from "./daemon_client.ts";
 import type { RunlarkSessionInterceptor } from "./interceptor.ts";
 import { QuestionCoordinator } from "./questions.ts";
 import { StreamReconnector } from "./stream_reconnector.ts";
+import { registerRunlarkChatTool } from "./tools.ts";
+import { UsageBridge } from "./usage_bridge.ts";
 import { handleRunlarkWebRequest } from "./web_routes.ts";
 import type {
   DaemonEventItem,
@@ -39,6 +42,8 @@ export class RunlarkHostBridge {
   private readonly client: DaemonClient;
   private readonly interceptor: RunlarkSessionInterceptor;
   private readonly questions: QuestionCoordinator;
+  private readonly boardClient: DaemonBoardClient;
+  private readonly usageBridge: UsageBridge;
   private readonly eventQueues = new Map<string, Promise<void>>();
   private readonly dshArchivedInternally = new Set<string>();
 
@@ -47,6 +52,8 @@ export class RunlarkHostBridge {
     this.client = client;
     this.interceptor = interceptor;
     this.questions = new QuestionCoordinator(ctx, client, interceptor);
+    this.boardClient = new DaemonBoardClient(client.getBaseUrl());
+    this.usageBridge = new UsageBridge(this.boardClient);
   }
 
   getInterceptor(): SessionCommandInterceptor {
@@ -128,6 +135,7 @@ export class RunlarkHostBridge {
     });
 
     this.questions.registerWaterfallListener();
+    registerRunlarkChatTool(this.ctx, this.boardClient);
 
     this.ctx.inject(["webServer"], (webCtx) => {
       webCtx.effect(
@@ -153,16 +161,24 @@ export class RunlarkHostBridge {
   }
 
   private async forwardSessionEvent(sessionId: string, event: SessionEvent): Promise<void> {
+    this.usageBridge.observeEvent(sessionId, event);
     if (event.type === "tool/call" && event.data.name === "ask_user_question") {
       this.questions.trackToolCall(sessionId, event.data.callId, event.data.arguments);
     }
 
+    const runId = this.interceptor.getActiveRunId(sessionId);
     if (event.type === "turn/end") {
+      if (runId) {
+        await this.usageBridge
+          .recordTurnEndUsage(sessionId, runId, event)
+          .catch((error: unknown) => {
+            this.ctx.logger?.warn?.("runlark: failed to record turn/end usage: %s", error);
+          });
+      }
       this.interceptor.setActiveRunId(sessionId, null);
       this.questions.clearSession(sessionId);
     }
 
-    const runId = this.interceptor.getActiveRunId(sessionId);
     await this.client.postDshEvent({
       session_id: sessionId,
       ...(runId ? { run_id: runId } : {}),

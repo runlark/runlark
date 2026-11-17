@@ -68,6 +68,7 @@ fn test_stop_run_transitions_to_cancel_requested_not_stopped() {
         revision: Revision(1),
         created_at: Timestamp(1000),
         updated_at: Timestamp(1000),
+        ..Run::default()
     };
 
     let cmd = SessionCommand::StopRun(StopRunCommand {
@@ -148,6 +149,7 @@ fn test_cwd_and_archive_guards() {
         revision: Revision(1),
         created_at: Timestamp(1000),
         updated_at: Timestamp(1000),
+        ..Run::default()
     };
 
     // ChangeCwd should fail while run is running
@@ -224,6 +226,7 @@ fn test_resume_session_recovers_interrupted_run() {
         revision: Revision(1),
         created_at: Timestamp(1000),
         updated_at: Timestamp(1000),
+        ..Run::default()
     };
 
     let cmd = SessionCommand::ResumeSession(ResumeSessionCommand {
@@ -293,6 +296,7 @@ fn test_session_mismatch_and_terminal_run_guards() {
         revision: Revision(1),
         created_at: Timestamp(1000),
         updated_at: Timestamp(1500),
+        ..Run::default()
     };
     let reuse_terminal_cmd = SessionCommand::SendPrompt(SendPromptCommand {
         command_id: CommandId::from("cmd_reuse"),
@@ -321,6 +325,7 @@ fn test_session_mismatch_and_terminal_run_guards() {
         revision: Revision(1),
         created_at: Timestamp(1000),
         updated_at: Timestamp(1500),
+        ..Run::default()
     };
     let mismatched_run_cmd = SessionCommand::SendPrompt(SendPromptCommand {
         command_id: CommandId::from("cmd_mismatch_run"),

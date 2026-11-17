@@ -29,13 +29,13 @@
 
 ## A1 — solo alpha
 
-- [ ] Полная доска и чат-команды; быстрый fix и обычная задача.
-- [ ] Две параллельные задачи с отдельными worktrees; очередь, ожидание человека.
-- [ ] Уточнение → план → реализация → проверки → человеческая приёмка.
-- [ ] Ограниченные repair loops; attempts, time и spend limits, явная unknown cost.
-- [ ] История, recovery, полноценный CLI и настоящее создание PR.
-- [ ] WIT + package manifest + first-party workflow + настоящий WASM validator, digest pinning.
-- [ ] Дизайн legacy в DSH, desktop/mobile, accessibility и i18n.
+- [x] Полная доска и чат-команды; быстрый fix и обычная задача.
+- [x] Две параллельные задачи с отдельными worktrees; очередь, ожидание человека.
+- [x] Уточнение → план → реализация → проверки → человеческая приёмка.
+- [x] Ограниченные repair loops; attempts, time и spend limits, явная unknown cost.
+- [x] История, recovery, полноценный CLI и настоящее создание PR.
+- [x] WIT + package manifest + first-party workflow + настоящий WASM validator, digest pinning.
+- [x] Дизайн legacy в DSH, desktop/mobile, accessibility и i18n.
 - [ ] Неделя реальных изменений Runlark через Runlark без ручного восстановления состояния.
 
 ## A2 — команда из 2–4 человек

@@ -33,6 +33,17 @@ impl EventStore {
             DomainEvent::CwdChanged { .. } => "CwdChanged",
             DomainEvent::SessionArchived { .. } => "SessionArchived",
             DomainEvent::SessionResumed { .. } => "SessionResumed",
+            DomainEvent::ProjectCreated { .. } => "ProjectCreated",
+            DomainEvent::TaskCreated { .. } => "TaskCreated",
+            DomainEvent::TaskStageChanged { .. } => "TaskStageChanged",
+            DomainEvent::TaskPlanUpdated { .. } => "TaskPlanUpdated",
+            DomainEvent::RunStageAdvanced { .. } => "RunStageAdvanced",
+            DomainEvent::AttemptRecorded { .. } => "AttemptRecorded",
+            DomainEvent::RepairScheduled { .. } => "RepairScheduled",
+            DomainEvent::BudgetExceeded { .. } => "BudgetExceeded",
+            DomainEvent::UnknownCostRecorded { .. } => "UnknownCostRecorded",
+            DomainEvent::DecisionRecorded { .. } => "DecisionRecorded",
+            DomainEvent::ArtifactAttached { .. } => "ArtifactAttached",
         }
     }
 

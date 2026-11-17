@@ -54,6 +54,7 @@ pub async fn submit_command(
             state.publish_events(&session.id.0, &events);
             state.notify_outbox();
             state.notify_dsh_subscriber();
+            state.notify_scheduler();
             Ok((
                 StatusCode::CREATED,
                 Json(SubmitCommandResponse {

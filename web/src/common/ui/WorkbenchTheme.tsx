@@ -3,6 +3,7 @@ import "@mantine/core/styles/Badge.css";
 import "@mantine/core/styles/Button.css";
 import "@mantine/core/styles/Input.css";
 import "../workbench.css";
+import "../board.css";
 
 import { MantineProvider, createTheme } from "@mantine/core";
 import { useState, type ReactNode } from "react";

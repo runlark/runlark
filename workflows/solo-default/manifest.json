@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "name": "solo-default",
+  "version": "0.1.0",
+  "kind": "workflow",
+  "wit_version": "runlark:workflow@0.1.0",
+  "world": "workflow-validator",
+  "entrypoint": "validator.wasm",
+  "sha256": "e00c595107e24bc9ba7a74881527cc47c990acf861a8740e935be26dda3e5f82",
+  "workflow_path": "workflow.json",
+  "workflow_sha256": "8a742851259d62b49eee8e8d85b184748d394226eed61bd16ddd8c0e32df2e28",
+  "capabilities": ["log"],
+  "limits": {
+    "max_fuel": 1000000,
+    "max_memory_bytes": 16777216,
+    "max_tables": 4,
+    "max_instances": 4
+  }
+}

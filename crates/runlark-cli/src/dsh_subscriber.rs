@@ -424,6 +424,28 @@ impl DshSubscriber {
                     event.event_type,
                     session_id
                 );
+            } else if event.event_type == "turn/end"
+                && let Ok(Some(sess)) = SessionStore::get_session(&conn, session_id)
+                && let Some(run_id) = sess.active_run_id
+                && let Ok(Some(run)) = SessionStore::get_run(&conn, &run_id)
+                && run.task_id.is_some()
+                && !run.status.is_terminal()
+            {
+                let state = self.state.clone();
+                tokio::spawn(async move {
+                    if let Err(err) = crate::repair::WorkflowPipeline::on_dsh_turn_ended(
+                        &state,
+                        &run_id,
+                        Timestamp(AppState::current_timestamp_ms()),
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            "workflow pipeline failed on subscriber turn/end for {}: {err}",
+                            run_id
+                        );
+                    }
+                });
             }
         }
     }

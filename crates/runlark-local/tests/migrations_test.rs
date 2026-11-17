@@ -27,6 +27,13 @@ fn test_migrations_fresh_and_idempotent() {
     assert!(tables.contains(&"events".to_string()));
     assert!(tables.contains(&"questions".to_string()));
     assert!(tables.contains(&"dsh_cursors".to_string()));
+    assert!(tables.contains(&"projects".to_string()));
+    assert!(tables.contains(&"tasks".to_string()));
+    assert!(tables.contains(&"attempts".to_string()));
+    assert!(tables.contains(&"decisions".to_string()));
+    assert!(tables.contains(&"artifacts".to_string()));
+    assert!(tables.contains(&"run_artifacts".to_string()));
+    assert!(tables.contains(&"board_commands".to_string()));
     assert!(tables.contains(&"schema_migrations".to_string()));
 
     let mut mig_stmt = conn
@@ -37,5 +44,5 @@ fn test_migrations_fresh_and_idempotent() {
         .expect("query versions")
         .collect::<Result<Vec<_>, _>>()
         .expect("collect versions");
-    assert_eq!(versions, vec![1, 2, 3]);
+    assert_eq!(versions, vec![1, 2, 3, 4]);
 }

@@ -15,6 +15,18 @@ const forbidden = files.filter((file) => {
     }
 
     if (
+        file.startsWith("wit/") &&
+        !file.slice("wit/".length).includes("/") &&
+        /\.wit$/.test(file)
+    ) {
+        return false;
+    }
+
+    if (/^workflows\/[a-z0-9-]+\/[^/]+\.(?:wasm|wat)$/.test(file)) {
+        return false;
+    }
+
+    if (
         (file.startsWith("web/") || file.startsWith("packages/dsh-plugin/")) &&
         /\.(?:tsx|css)$/.test(file)
     ) {
@@ -23,7 +35,7 @@ const forbidden = files.filter((file) => {
 
     return (
         /(?:^|\/)(?:Dockerfile)$/.test(file) ||
-        /\.(?:[cm]?js|[jt]sx|sh|bash|wasm|wit|py|go|lean|tsp|css|scss|html)$/.test(file)
+        /\.(?:[cm]?js|[jt]sx|sh|bash|wasm|wat|wit|py|go|lean|tsp|css|scss|html)$/.test(file)
     );
 });
 

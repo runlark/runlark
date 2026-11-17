@@ -1,9 +1,19 @@
 use crate::connection::{from_sql_i64, to_sql_i64};
+use crate::enum_codec::{
+    str_to_task_kind, str_to_workflow_stage, task_kind_to_str, workflow_stage_to_str,
+};
 use crate::error::StorageError;
 use runlark_domain::{
-    Revision, Run, RunId, RunStatus, Session, SessionId, SessionStatus, TaskId, Timestamp,
+    ArtifactDigest, BudgetPolicy, CostSummary, PolicyDigest, ProjectId, Revision, Run, RunId,
+    RunStatus, Session, SessionId, SessionStatus, TaskId, Timestamp,
 };
 use rusqlite::{Connection, OptionalExtension, Row, params};
+
+const RUN_SELECT_COLUMNS: &str = concat!(
+    "run_id, session_id, status, worktree_path, revision, created_at, updated_at, ",
+    "task_id, project_id, workflow_stage, task_kind, workflow_digest, base_sha, head_sha, ",
+    "plan_version, policy_digest, budget_json, cost_summary_json, repair_attempts, pr_url"
+);
 
 pub struct SessionStore;
 
@@ -72,7 +82,7 @@ impl SessionStore {
         })
     }
 
-    fn row_to_run(row: &Row<'_>) -> rusqlite::Result<Run> {
+    pub(crate) fn row_to_run(row: &Row<'_>) -> rusqlite::Result<Run> {
         let r_id: String = row.get(0)?;
         let s_id: String = row.get(1)?;
         let status_str: String = row.get(2)?;
@@ -80,6 +90,74 @@ impl SessionStore {
         let rev = from_sql_i64(row.get::<_, i64>(4)?, 4)?;
         let created = from_sql_i64(row.get::<_, i64>(5)?, 5)?;
         let updated = from_sql_i64(row.get::<_, i64>(6)?, 6)?;
+        let task_id: Option<String> = row.get(7)?;
+        let project_id: Option<String> = row.get(8)?;
+        let wf_stage_str: String = row.get(9)?;
+        let task_kind_str: String = row.get(10)?;
+        let wf_digest_str: Option<String> = row.get(11)?;
+        let base_sha: Option<String> = row.get(12)?;
+        let head_sha: Option<String> = row.get(13)?;
+        let plan_version_raw: i64 = row.get(14)?;
+        let policy_digest: Option<String> = row.get(15)?;
+        let budget_json: Option<String> = row.get(16)?;
+        let cost_summary_json: Option<String> = row.get(17)?;
+        let repair_attempts_raw: i64 = row.get(18)?;
+        let pr_url: Option<String> = row.get(19)?;
+
+        let workflow_stage = str_to_workflow_stage(&wf_stage_str).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+        let task_kind = str_to_task_kind(&task_kind_str).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(10, rusqlite::types::Type::Text, Box::new(e))
+        })?;
+        let workflow_digest = wf_digest_str
+            .map(ArtifactDigest::parse)
+            .transpose()
+            .map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    11,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?;
+        let plan_version = u32::try_from(plan_version_raw).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                14,
+                rusqlite::types::Type::Integer,
+                Box::new(e),
+            )
+        })?;
+        let budget_policy = budget_json
+            .as_deref()
+            .map(serde_json::from_str::<BudgetPolicy>)
+            .transpose()
+            .map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    16,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?
+            .unwrap_or_default();
+        let cost_summary = cost_summary_json
+            .as_deref()
+            .map(serde_json::from_str::<CostSummary>)
+            .transpose()
+            .map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    17,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?
+            .unwrap_or_default();
+        let repair_attempts = u32::try_from(repair_attempts_raw).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                18,
+                rusqlite::types::Type::Integer,
+                Box::new(e),
+            )
+        })?;
 
         Ok(Run {
             id: RunId::from(r_id),
@@ -89,6 +167,19 @@ impl SessionStore {
             revision: Revision(rev),
             created_at: Timestamp(created),
             updated_at: Timestamp(updated),
+            task_id: task_id.map(TaskId::from),
+            project_id: project_id.map(ProjectId::from),
+            workflow_stage,
+            task_kind,
+            workflow_digest,
+            base_sha,
+            head_sha,
+            plan_version,
+            policy_digest: policy_digest.map(PolicyDigest::from),
+            budget_policy,
+            cost_summary,
+            repair_attempts,
+            pr_url,
         })
     }
 
@@ -213,19 +304,37 @@ impl SessionStore {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
-    /// Upserts a run execution record.
+    /// Upserts a run execution record (including A1 workflow, SHA, digest, and budget metadata).
     ///
     /// # Errors
-    /// Returns `StorageError` if SQL execution fails.
+    /// Returns `StorageError` if serialization or SQL execution fails.
     pub fn save_run(conn: &Connection, run: &Run) -> Result<(), StorageError> {
+        let budget_json = serde_json::to_string(&run.budget_policy)?;
+        let cost_summary_json = serde_json::to_string(&run.cost_summary)?;
         conn.execute(
             concat!(
-                "INSERT INTO runs (run_id, session_id, status, worktree_path, revision, created_at, updated_at) ",
-                "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ",
+                "INSERT INTO runs (",
+                "run_id, session_id, status, worktree_path, revision, created_at, updated_at, ",
+                "task_id, project_id, workflow_stage, task_kind, workflow_digest, base_sha, head_sha, ",
+                "plan_version, policy_digest, budget_json, cost_summary_json, repair_attempts, pr_url) ",
+                "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20) ",
                 "ON CONFLICT(run_id) DO UPDATE SET ",
                 "status = excluded.status, ",
                 "revision = excluded.revision, ",
-                "updated_at = excluded.updated_at"
+                "updated_at = excluded.updated_at, ",
+                "task_id = COALESCE(excluded.task_id, runs.task_id), ",
+                "project_id = COALESCE(excluded.project_id, runs.project_id), ",
+                "workflow_stage = excluded.workflow_stage, ",
+                "task_kind = excluded.task_kind, ",
+                "workflow_digest = COALESCE(excluded.workflow_digest, runs.workflow_digest), ",
+                "base_sha = COALESCE(excluded.base_sha, runs.base_sha), ",
+                "head_sha = COALESCE(excluded.head_sha, runs.head_sha), ",
+                "plan_version = excluded.plan_version, ",
+                "policy_digest = COALESCE(excluded.policy_digest, runs.policy_digest), ",
+                "budget_json = excluded.budget_json, ",
+                "cost_summary_json = excluded.cost_summary_json, ",
+                "repair_attempts = excluded.repair_attempts, ",
+                "pr_url = COALESCE(excluded.pr_url, runs.pr_url)"
             ),
             params![
                 run.id.as_ref(),
@@ -235,6 +344,19 @@ impl SessionStore {
                 to_sql_i64(run.revision.0)?,
                 to_sql_i64(run.created_at.0)?,
                 to_sql_i64(run.updated_at.0)?,
+                run.task_id.as_ref().map(AsRef::as_ref),
+                run.project_id.as_ref().map(AsRef::as_ref),
+                workflow_stage_to_str(run.workflow_stage),
+                task_kind_to_str(run.task_kind),
+                run.workflow_digest.as_ref().map(AsRef::as_ref),
+                run.base_sha,
+                run.head_sha,
+                i64::from(run.plan_version),
+                run.policy_digest.as_ref().map(AsRef::as_ref),
+                budget_json,
+                cost_summary_json,
+                i64::from(run.repair_attempts),
+                run.pr_url,
             ],
         )?;
         Ok(())
@@ -266,16 +388,10 @@ impl SessionStore {
     /// # Errors
     /// Returns `StorageError` if SQL query fails.
     pub fn get_run(conn: &Connection, run_id: &RunId) -> Result<Option<Run>, StorageError> {
-        conn.query_row(
-            concat!(
-                "SELECT run_id, session_id, status, worktree_path, revision, created_at, updated_at ",
-                "FROM runs WHERE run_id = ?1"
-            ),
-            params![run_id.as_ref()],
-            Self::row_to_run,
-        )
-        .optional()
-        .map_err(Into::into)
+        let sql = format!("SELECT {RUN_SELECT_COLUMNS} FROM runs WHERE run_id = ?1");
+        conn.query_row(&sql, params![run_id.as_ref()], Self::row_to_run)
+            .optional()
+            .map_err(Into::into)
     }
 
     /// Fetches the currently active run for a session, if `active_run_id` is set.
@@ -286,17 +402,16 @@ impl SessionStore {
         conn: &Connection,
         session_id: &SessionId,
     ) -> Result<Option<Run>, StorageError> {
-        conn.query_row(
-            concat!(
-                "SELECT r.run_id, r.session_id, r.status, r.worktree_path, r.revision, r.created_at, r.updated_at ",
-                "FROM runs r INNER JOIN sessions s ON r.run_id = s.active_run_id ",
-                "WHERE s.session_id = ?1"
-            ),
-            params![session_id.as_ref()],
-            Self::row_to_run,
-        )
-        .optional()
-        .map_err(Into::into)
+        let sql = concat!(
+            "SELECT r.run_id, r.session_id, r.status, r.worktree_path, r.revision, r.created_at, r.updated_at, ",
+            "r.task_id, r.project_id, r.workflow_stage, r.task_kind, r.workflow_digest, r.base_sha, r.head_sha, ",
+            "r.plan_version, r.policy_digest, r.budget_json, r.cost_summary_json, r.repair_attempts, r.pr_url ",
+            "FROM runs r INNER JOIN sessions s ON r.run_id = s.active_run_id ",
+            "WHERE s.session_id = ?1"
+        );
+        conn.query_row(sql, params![session_id.as_ref()], Self::row_to_run)
+            .optional()
+            .map_err(Into::into)
     }
 
     /// Lists all runs belonging to a session ordered by creation time ascending.
@@ -307,10 +422,10 @@ impl SessionStore {
         conn: &Connection,
         session_id: &SessionId,
     ) -> Result<Vec<Run>, StorageError> {
-        let mut stmt = conn.prepare(concat!(
-            "SELECT run_id, session_id, status, worktree_path, revision, created_at, updated_at ",
-            "FROM runs WHERE session_id = ?1 ORDER BY created_at ASC, rowid ASC"
-        ))?;
+        let sql = format!(
+            "SELECT {RUN_SELECT_COLUMNS} FROM runs WHERE session_id = ?1 ORDER BY created_at ASC, rowid ASC"
+        );
+        let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(params![session_id.as_ref()], Self::row_to_run)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }

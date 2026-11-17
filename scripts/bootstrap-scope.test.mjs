@@ -33,15 +33,19 @@ test("documentation, tooling and preserved vendor guidance pass", () => {
     assert.equal(result.status, 0, result.stderr);
 });
 
-test("integrated languages (Rust, TypeScript/TSX, CSS, SQL) pass scope check", () => {
+test("integrated languages (Rust, TypeScript/TSX, CSS, SQL, WIT, workflow WASM/WAT) pass scope check", () => {
     const result = check([
         "crates/runlark-domain/src/lib.rs",
+        "crates/runlark-wasm/src/lib.rs",
         "Cargo.toml",
         "packages/dsh-plugin/src/index.ts",
         "packages/dsh-plugin/src/ui/slots.tsx",
         "web/src/app/index.tsx",
         "web/src/common/workbench.css",
         "crates/runlark-local/migrations/0001_initial.sql",
+        "wit/runlark-workflow.wit",
+        "workflows/solo-default/validator.wat",
+        "workflows/solo-default/validator.wasm",
     ]);
 
     assert.equal(result.status, 0, result.stderr);
@@ -54,7 +58,9 @@ for (const file of [
     "bin/build.sh",
     "images/check/Dockerfile",
     "plugins/result.wit",
+    "wit/nested/other.wit",
     "bin/sample.wasm",
+    "plugins/other.wat",
     "models/spec.lean",
     "services/backend.go",
     "scripts/deploy.py",
