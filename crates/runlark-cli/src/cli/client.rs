@@ -22,6 +22,29 @@ impl fmt::Display for CliHttpError {
 
 impl std::error::Error for CliHttpError {}
 
+/// Validates a single URL path segment against traversal, delimiter, and whitespace injection.
+///
+/// # Errors
+/// Returns [`CliHttpError`] if `value` is empty, `.`/`..`, or contains `/`, `\`, `?`, `#`, `%`,
+/// or whitespace/control characters.
+pub(crate) fn validate_path_segment<'a>(
+    value: &'a str,
+    label: &str,
+) -> Result<&'a str, CliHttpError> {
+    if value.is_empty()
+        || value == "."
+        || value == ".."
+        || value.contains(['/', '\\', '?', '#', '%'])
+        || value.chars().any(|c| c.is_whitespace() || c.is_control())
+    {
+        return Err(CliHttpError {
+            status: None,
+            message: format!("invalid {label} path segment: `{value}`"),
+        });
+    }
+    Ok(value)
+}
+
 /// Thin HTTP client used by `runlark` CLI subcommands to talk to the local Runlark daemon.
 #[derive(Clone)]
 pub struct DaemonHttpClient {

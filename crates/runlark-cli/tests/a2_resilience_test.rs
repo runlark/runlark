@@ -365,3 +365,80 @@ async fn team_prompt_reports_actual_workflow_stage_and_empty_command_id_falls_ba
     daemon_handle.abort();
     mock_handle.abort();
 }
+
+#[test]
+fn cli_accept_invite_rejects_session_bearer_env_fallback() {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_runlark"))
+        .env_remove("RUNLARK_INVITE_TOKEN")
+        .env_remove("RUNLARK_TEAM_INVITE_TOKEN")
+        .env("RUNLARK_TEAM_TOKEN", "bearer_secret_should_not_be_invite")
+        .args([
+            "--daemon-url",
+            "http://127.0.0.1:9",
+            "team",
+            "accept-invite",
+            "--server",
+            "http://127.0.0.1:9999",
+            "--name",
+            "Bob",
+        ])
+        .output()
+        .expect("run cli");
+    assert!(
+        !out.status.success(),
+        "accept-invite must not use RUNLARK_TEAM_TOKEN"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("RUNLARK_INVITE_TOKEN"),
+        "got stderr: {stderr}"
+    );
+}
+
+#[test]
+fn cli_team_and_runner_path_segments_reject_traversal_and_delimiters() {
+    let cases: &[&[&str]] = &[
+        &["team", "members", "--workspace", "../evil"],
+        &[
+            "team",
+            "invite",
+            "--workspace",
+            "ws?x=1",
+            "--invitee",
+            "a@b.c",
+        ],
+        &["runner", "assign", "run/bad", "--runner-id", "r1"],
+        &[
+            "runner",
+            "cancel-unreachable",
+            "run#frag",
+            "--reason",
+            "offline",
+        ],
+        &[
+            "project",
+            "promote-team",
+            "prj%2fbad",
+            "--server",
+            "http://127.0.0.1:9",
+            "--workspace",
+            "ws1",
+            "--token",
+            "tok",
+        ],
+        &["task", "comment", "..", "hi"],
+    ];
+    for args in cases {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_runlark"))
+            .args(["--daemon-url", "http://127.0.0.1:9"])
+            .args(*args)
+            .output()
+            .expect("run cli");
+        assert!(!out.status.success(), "expected failure for {args:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("invalid") && stderr.contains("path segment"),
+            "unexpected stderr for {args:?}: {stderr}"
+        );
+    }
+}

@@ -1,11 +1,11 @@
-use crate::cli::client::{DaemonHttpClient, print_output};
+use crate::cli::client::{DaemonHttpClient, print_output, validate_path_segment};
 use crate::cli::run_chat_handlers::CliResult;
 use crate::cli::{RunnerAction, TeamAction};
 use serde_json::json;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-/// Token input sources supporting env vars, files, stdin, or fallback CLI flags.
+/// Token input sources supporting stdin, files, explicit CLI flags, or environment-variable fallback.
 pub struct TokenInput {
     pub token: Option<String>,
     pub token_file: Option<PathBuf>,
@@ -30,7 +30,7 @@ fn resolve_token_secret(
         } else {
             Some(std::fs::read_to_string(&path)?)
         }
-    } else if let Some(tok) = input.token {
+    } else if let Some(tok) = input.token.filter(|s| !s.trim().is_empty()) {
         Some(tok)
     } else {
         env_vars
@@ -61,6 +61,7 @@ pub async fn handle_project_promote_team(
     token_input: TokenInput,
     json_mode: bool,
 ) -> CliResult {
+    let project_id = validate_path_segment(project_id, "project_id")?;
     let token = resolve_token_secret(token_input, &["RUNLARK_TEAM_TOKEN"], false, "bearer token")?;
     let mut body = json!({
         "server_url": server,
@@ -97,6 +98,7 @@ pub async fn handle_task_comment(
     run_id: Option<String>,
     json_mode: bool,
 ) -> CliResult {
+    let task_id = validate_path_segment(task_id, "task_id")?;
     let mut body = json!({ "body": message });
     if let Some(rid) = run_id {
         body["run_id"] = json!(rid);
@@ -151,6 +153,7 @@ pub async fn handle_team(
             .await
         }
         TeamAction::Members { workspace } => {
+            let workspace = validate_path_segment(&workspace, "workspace")?;
             let val = client
                 .get_json(&format!("/api/v1/team/workspaces/{workspace}/members"))
                 .await?;
@@ -272,6 +275,7 @@ pub async fn handle_runner(
             workspace,
             expected_revision,
         } => {
+            let run_id = validate_path_segment(&run_id, "run_id")?;
             let mut body = json!({ "runner_id": runner_id });
             if let Some(wid) = workspace {
                 body["workspace_id"] = json!(wid);
@@ -297,6 +301,7 @@ pub async fn handle_runner(
             workspace,
             expected_revision,
         } => {
+            let run_id = validate_path_segment(&run_id, "run_id")?;
             let mut body = json!({ "reason": reason });
             if let Some(wid) = workspace {
                 body["workspace_id"] = json!(wid);
@@ -357,6 +362,7 @@ async fn handle_team_invite(
     ttl_ms: Option<u64>,
     json_mode: bool,
 ) -> CliResult {
+    let workspace = validate_path_segment(&workspace, "workspace")?;
     let mut body = json!({
         "invitee_hint": invitee,
         "role": role,
@@ -390,11 +396,7 @@ async fn handle_team_accept_invite(
 ) -> CliResult {
     let token = resolve_token_secret(
         token_input,
-        &[
-            "RUNLARK_TEAM_INVITE_TOKEN",
-            "RUNLARK_INVITE_TOKEN",
-            "RUNLARK_TEAM_TOKEN",
-        ],
+        &["RUNLARK_TEAM_INVITE_TOKEN", "RUNLARK_INVITE_TOKEN"],
         true,
         "invite token",
     )?

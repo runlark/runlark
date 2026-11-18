@@ -286,18 +286,15 @@ pub(super) async fn exec_prompt(
             crate::routes::commands::submit_team_session_command(state, &cmd, team, now).await?
     {
         let created_run_id = resp.run_id.unwrap_or_else(|| run_id.0.clone());
-        let workflow_stage = {
-            let conn = state.get_connection().map_err(|e| {
-                api_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "storage_error",
-                    e.to_string(),
-                )
-            })?;
-            SessionStore::get_run(&conn, &RunId::from(created_run_id.as_str()))
-                .map_err(storage_error_to_http)?
-                .map_or(WorkflowStage::Implementation, |r| r.workflow_stage)
-        };
+        let workflow_stage = state
+            .get_connection()
+            .ok()
+            .and_then(|conn| {
+                SessionStore::get_run(&conn, &RunId::from(created_run_id.as_str()))
+                    .ok()
+                    .flatten()
+            })
+            .map_or(WorkflowStage::Implementation, |r| r.workflow_stage);
         return Ok((
             status,
             ChatDispatchResponse {

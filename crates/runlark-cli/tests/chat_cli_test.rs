@@ -303,6 +303,48 @@ fn dsh_endpoint_log_origin_strips_query_and_userinfo() {
 
     let pw_at = DshEndpoint::parse("http://user:p@ss@127.0.0.1:4321/api", None);
     assert_eq!(pw_at.log_origin(), "http://127.0.0.1:4321/api");
+
+    let raw_query_frag = DshEndpoint {
+        origin: "http://user:s@127.0.0.1:4321/api?token=secret#frag".to_string(),
+        ws_mux_url: String::new(),
+        token: None,
+    };
+    assert_eq!(raw_query_frag.log_origin(), "http://127.0.0.1:4321/api");
+}
+
+async fn run_team_login_cli(
+    base: &str,
+    env_token: Option<&str>,
+    extra_args: &[&str],
+) -> std::process::Output {
+    let base = base.to_string();
+    let env_token = env_token.map(ToString::to_string);
+    let extra: Vec<String> = extra_args.iter().map(|s| (*s).to_string()).collect();
+    tokio::task::spawn_blocking(move || {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_runlark"));
+        match env_token {
+            Some(tok) => {
+                cmd.env("RUNLARK_TEAM_TOKEN", tok);
+            }
+            None => {
+                cmd.env_remove("RUNLARK_TEAM_TOKEN");
+            }
+        }
+        cmd.args([
+            "--daemon-url",
+            &base,
+            "--json",
+            "team",
+            "login",
+            "--server",
+            &base,
+        ])
+        .args(&extra)
+        .output()
+        .expect("run cli team login")
+    })
+    .await
+    .expect("join")
 }
 
 #[tokio::test]
@@ -338,26 +380,8 @@ async fn cli_team_login_supports_token_file_and_env_without_argv() {
         let _ = axum::serve(listener, app).await;
     });
 
-    let base_file = base.clone();
     let token_str = token_path.to_string_lossy().into_owned();
-    let file_out = tokio::task::spawn_blocking(move || {
-        Command::new(env!("CARGO_BIN_EXE_runlark"))
-            .args([
-                "--daemon-url",
-                &base_file,
-                "--json",
-                "team",
-                "login",
-                "--server",
-                &base_file,
-                "--token-file",
-                &token_str,
-            ])
-            .output()
-            .expect("cli token-file")
-    })
-    .await
-    .expect("join");
+    let file_out = run_team_login_cli(&base, None, &["--token-file", &token_str]).await;
     assert!(
         file_out.status.success(),
         "{}",
@@ -366,37 +390,18 @@ async fn cli_team_login_supports_token_file_and_env_without_argv() {
     let file_json: Value = serde_json::from_slice(&file_out.stdout).expect("json");
     assert_eq!(file_json["echo_token"], "tok_from_file");
 
-    let base_env = base.clone();
-    let env_out = tokio::task::spawn_blocking(move || {
-        Command::new(env!("CARGO_BIN_EXE_runlark"))
-            .env("RUNLARK_TEAM_TOKEN", "tok_from_env")
-            .args([
-                "--daemon-url",
-                &base_env,
-                "--json",
-                "team",
-                "login",
-                "--server",
-                &base_env,
-            ])
-            .output()
-            .expect("cli env token")
-    })
-    .await
-    .expect("join");
+    let env_out = run_team_login_cli(&base, Some("tok_from_env"), &[]).await;
     assert!(env_out.status.success());
     let env_json: Value = serde_json::from_slice(&env_out.stdout).expect("json");
     assert_eq!(env_json["echo_token"], "tok_from_env");
 
-    let missing_out = tokio::task::spawn_blocking(move || {
-        Command::new(env!("CARGO_BIN_EXE_runlark"))
-            .env_remove("RUNLARK_TEAM_TOKEN")
-            .args(["--daemon-url", &base, "team", "login", "--server", &base])
-            .output()
-            .expect("cli missing token")
-    })
-    .await
-    .expect("join");
+    let blank_out =
+        run_team_login_cli(&base, Some("tok_env_after_blank_flag"), &["--token", "   "]).await;
+    assert!(blank_out.status.success());
+    let blank_json: Value = serde_json::from_slice(&blank_out.stdout).expect("json");
+    assert_eq!(blank_json["echo_token"], "tok_env_after_blank_flag");
+
+    let missing_out = run_team_login_cli(&base, None, &[]).await;
     assert!(!missing_out.status.success());
 
     server.abort();
