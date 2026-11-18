@@ -4,9 +4,9 @@ use super::harness::{
 };
 use reqwest::StatusCode;
 use runlark_domain::{
-    CancelTeamRunCommand, CommandId, EventSeq, ForceCancelUnreachableRunCommand, Revision, RunId,
-    RunStatus, RunnerEventInput, RunnerId, RunnerRunReport, RunnerStatus, TeamCommand,
-    TeamRunEvent, Timestamp, WorkspaceEventEnvelope, WorkspaceSyncEvent,
+    CancelTeamRunCommand, CommandId, EventSeq, ForceCancelUnreachableRunCommand, LeaseEpoch,
+    Revision, RunId, RunStatus, RunnerEventInput, RunnerId, RunnerRunReport, RunnerStatus,
+    TeamCommand, TeamRunEvent, Timestamp, WorkspaceEventEnvelope, WorkspaceSyncEvent,
 };
 use serde_json::json;
 
@@ -122,7 +122,7 @@ async fn test_runner_fencing_and_run_event_dedup() {
 
     let bad_report = RunnerRunReport {
         runner_id: RunnerId::from("runner_b"),
-        lease_epoch: 1,
+        lease_epoch: LeaseEpoch(1),
         status: None,
         workflow_stage: None,
         head_sha: None,
@@ -136,7 +136,7 @@ async fn test_runner_fencing_and_run_event_dedup() {
 
     let report = RunnerRunReport {
         runner_id: RunnerId::from("runner_a"),
-        lease_epoch: 1,
+        lease_epoch: LeaseEpoch(1),
         status: None,
         workflow_stage: None,
         head_sha: Some("1111111111111111111111111111111111111111".to_string()),
@@ -193,7 +193,7 @@ async fn test_cancel_requested_transition_and_terminal_run_guards() {
     // Runner cannot move CancelRequested back to Running.
     let revert = RunnerRunReport {
         runner_id: RunnerId::from("runner_a"),
-        lease_epoch: 1,
+        lease_epoch: LeaseEpoch(1),
         status: Some(RunStatus::Running),
         workflow_stage: None,
         head_sha: None,
@@ -208,7 +208,7 @@ async fn test_cancel_requested_transition_and_terminal_run_guards() {
     // Settling CancelRequested -> Stopped clears task.active_run_id and bumps task revision.
     let settle = RunnerRunReport {
         runner_id: RunnerId::from("runner_a"),
-        lease_epoch: 1,
+        lease_epoch: LeaseEpoch(1),
         status: Some(RunStatus::Stopped),
         workflow_stage: None,
         head_sha: None,
@@ -223,7 +223,7 @@ async fn test_cancel_requested_transition_and_terminal_run_guards() {
     // Terminal run rejects late event appends or SHA mutations.
     let late = RunnerRunReport {
         runner_id: RunnerId::from("runner_a"),
-        lease_epoch: 1,
+        lease_epoch: LeaseEpoch(1),
         status: None,
         workflow_stage: None,
         head_sha: Some("2222222222222222222222222222222222222222".to_string()),
@@ -439,7 +439,7 @@ async fn test_unreachable_runner_cannot_report_state_until_heartbeat_restores_on
 
     let report = RunnerRunReport {
         runner_id: RunnerId::from("runner_a"),
-        lease_epoch: 1,
+        lease_epoch: LeaseEpoch(1),
         status: None,
         workflow_stage: None,
         head_sha: Some("3333333333333333333333333333333333333333".to_string()),

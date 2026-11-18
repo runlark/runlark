@@ -7,10 +7,10 @@ use crate::pg::codec::{
 use crate::pg::{begin_repeatable_read, get_client};
 use deadpool_postgres::{Pool, Transaction};
 use runlark_domain::{
-    Attempt, CursorSeq, Decision, EventSeq, RunId, RunnerId, RunnerRegistration, Task, TaskComment,
-    TaskId, TeamProjectSpec, TeamRunArtifactEntry, TeamRunEntry, TeamRunEvent, Timestamp, UserId,
-    Workspace, WorkspaceAction, WorkspaceEventEnvelope, WorkspaceId, WorkspaceMember,
-    WorkspaceSnapshot, WorkspaceSyncEvent,
+    Attempt, CursorSeq, Decision, EventSeq, LeaseEpoch, RunId, RunnerId, RunnerRegistration, Task,
+    TaskComment, TaskId, TeamProjectSpec, TeamRunArtifactEntry, TeamRunEntry, TeamRunEvent,
+    Timestamp, UserId, Workspace, WorkspaceAction, WorkspaceEventEnvelope, WorkspaceId,
+    WorkspaceMember, WorkspaceSnapshot, WorkspaceSyncEvent,
 };
 
 /// Reads a consistent point-in-time [`WorkspaceSnapshot`] inside a `REPEATABLE READ` `PostgreSQL`
@@ -394,7 +394,10 @@ pub async fn list_run_events(
             run_id: RunId::from(row.get::<_, String>("run_id")),
             seq: EventSeq(ServerError::from_pg_i64(row.get("run_seq"), "run_seq")?),
             runner_id: RunnerId::from(row.get::<_, String>("runner_id")),
-            lease_epoch: ServerError::from_pg_i64(row.get("lease_epoch"), "lease_epoch")?,
+            lease_epoch: LeaseEpoch(ServerError::from_pg_i64(
+                row.get("lease_epoch"),
+                "lease_epoch",
+            )?),
             event_type: row.get("event_type"),
             payload_json: row.get("payload_json"),
             created_at: Timestamp(ServerError::from_pg_i64(

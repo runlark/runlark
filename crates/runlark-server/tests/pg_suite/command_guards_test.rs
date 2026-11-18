@@ -5,10 +5,10 @@ use super::harness::{
 use reqwest::StatusCode;
 use runlark_domain::{
     ActorRole, ArtifactDigest, ArtifactKind, AttachArtifactCommand, AttemptId, AttemptOutcome,
-    BudgetPolicy, CancelTeamRunCommand, CommandId, DecisionId, DecisionKind, MoveTaskStageCommand,
-    PolicyDigest, ProjectId, RecordAttemptCommand, RecordDecisionCommand, Revision, Run, RunId,
-    RunStatus, RunnerId, RunnerRunReport, SessionId, Task, TaskId, TaskKind, TaskStage,
-    TeamCommand, TeamProjectSpec, Timestamp, WorkflowStage, WorkspaceId,
+    BudgetPolicy, CancelTeamRunCommand, CommandId, DecisionId, DecisionKind, LeaseEpoch,
+    MoveTaskStageCommand, PolicyDigest, ProjectId, RecordAttemptCommand, RecordDecisionCommand,
+    Revision, Run, RunId, RunStatus, RunnerId, RunnerRunReport, SessionId, Task, TaskId, TaskKind,
+    TaskStage, TeamCommand, TeamProjectSpec, Timestamp, WorkflowStage, WorkspaceId,
 };
 use runlark_server::cas::sha256_hex;
 use serde_json::json;
@@ -236,7 +236,7 @@ async fn setup_acceptance_task_and_run(
             .bearer_auth(tok)
             .json(&RunnerRunReport {
                 runner_id: RunnerId::from("runner_dg"),
-                lease_epoch: 1,
+                lease_epoch: LeaseEpoch(1),
                 status: None,
                 workflow_stage: Some(stage),
                 head_sha: Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()),
@@ -277,7 +277,7 @@ async fn settle_run_status(srv: &TestServer, tok: &str, wid: &str, rid: &str, st
         .bearer_auth(tok)
         .json(&RunnerRunReport {
             runner_id: RunnerId::from("runner_dg"),
-            lease_epoch: 1,
+            lease_epoch: LeaseEpoch(1),
             status: Some(status),
             workflow_stage: None,
             head_sha: None,

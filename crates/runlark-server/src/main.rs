@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use runlark_domain::{Timestamp, UserId, WorkspaceId};
-use runlark_server::auth::AuthenticatedUser;
 use runlark_server::config::ServerConfig;
+use runlark_server::pg::workspaces::BootstrapWorkspaceSpec;
 use runlark_server::pg::{create_pool, run_migrations, workspaces};
 use runlark_server::server::run_server;
 use std::path::PathBuf;
@@ -56,7 +56,8 @@ fn resolve_postgres_url(
     flag: Option<String>,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     flag.or_else(|| std::env::var("RUNLARK_POSTGRES_URL").ok())
-        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
         .ok_or_else(|| "missing --postgres-url or RUNLARK_POSTGRES_URL".into())
 }
 
@@ -98,39 +99,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             workspace_name,
             workspace_slug,
         } => {
+            if workspace_slug.is_none() && (workspace_id.is_some() || workspace_name.is_some()) {
+                return Err(
+                    "--workspace-slug is required when --workspace-id or --workspace-name is specified"
+                        .into(),
+                );
+            }
+            let workspace = workspace_slug.map(|slug| BootstrapWorkspaceSpec {
+                workspace_id: workspace_id.map(WorkspaceId::from),
+                name: workspace_name.unwrap_or_else(|| slug.clone()),
+                slug,
+            });
             let postgres_url = resolve_postgres_url(postgres_url)?;
             let pool = create_pool(&postgres_url)?;
             run_migrations(&pool).await?;
             let now = Timestamp(ServerConfig::current_timestamp_ms());
-            let issued = workspaces::issue_user_token(
+            let (issued, created_workspace_id) = workspaces::bootstrap_owner(
                 &pool,
                 &UserId::from(user_id),
                 &display_name,
                 email.as_deref(),
                 &label,
+                workspace,
                 now,
             )
             .await?;
-
-            let created_workspace_id = if let Some(slug) = workspace_slug {
-                let ws_name = workspace_name.unwrap_or_else(|| slug.clone());
-                let actor = AuthenticatedUser {
-                    user_id: issued.user_id.clone(),
-                    display_name: issued.display_name.clone(),
-                };
-                let (ws, _) = workspaces::create_workspace(
-                    &pool,
-                    &actor,
-                    workspace_id.map(WorkspaceId::from),
-                    &ws_name,
-                    &slug,
-                    now,
-                )
-                .await?;
-                Some(ws.id)
-            } else {
-                None
-            };
 
             println!(
                 "{}",

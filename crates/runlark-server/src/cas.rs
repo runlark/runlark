@@ -75,16 +75,22 @@ impl ServerCasStore {
         } else {
             let seq = CAS_TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
             let tmp_path = tmp_dir.join(format!("blob-{}-{seq}.tmp", std::process::id()));
-            {
+            let write_result = (|| -> Result<(), std::io::Error> {
                 let mut file = File::create(&tmp_path)?;
                 file.write_all(bytes)?;
                 file.sync_all()?;
+                Ok(())
+            })();
+            if let Err(err) = write_result {
+                let _ = fs::remove_file(&tmp_path);
+                return Err(ServerError::Io(err));
             }
             if let Err(err) = fs::rename(&tmp_path, &final_path) {
                 let _ = fs::remove_file(&tmp_path);
                 if !final_path.exists() {
                     return Err(ServerError::Io(err));
                 }
+                let _ = self.get_verified_bytes(expected_digest)?;
             }
         }
 
@@ -103,7 +109,7 @@ impl ServerCasStore {
     /// Reads an artifact blob from disk and verifies its SHA-256 digest before returning bytes.
     ///
     /// # Errors
-    /// Returns [`ServerError::NotFound`] if missing, [`ServerError::BadRequest`] on hash
+    /// Returns [`ServerError::NotFound`] if missing, [`ServerError::Internal`] on hash
     /// corruption, or [`ServerError::Io`] on disk read failure.
     pub fn get_verified_bytes(&self, digest: &ArtifactDigest) -> Result<Vec<u8>, ServerError> {
         let path = self.blob_path(digest);
@@ -116,12 +122,39 @@ impl ServerCasStore {
         let bytes = fs::read(&path)?;
         let actual = sha256_hex(&bytes);
         if actual != digest.as_str() {
-            return Err(ServerError::BadRequest(format!(
+            return Err(ServerError::Internal(format!(
                 "corrupt CAS artifact {}: expected {}, actual {actual}",
                 digest.as_str(),
                 digest.as_str()
             )));
         }
         Ok(bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ServerCasStore, sha256_hex};
+    use crate::error::ServerError;
+    use runlark_domain::{ArtifactDigest, ArtifactKind, Timestamp};
+
+    #[test]
+    fn put_verified_bytes_rejects_corrupt_existing_blob() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cas = ServerCasStore::new(dir.path());
+        let bytes = b"valid-payload";
+        let digest = ArtifactDigest::parse(sha256_hex(bytes)).expect("digest");
+        let blob_path = cas.blob_path(&digest);
+        std::fs::create_dir_all(blob_path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(&blob_path, b"corrupted-on-disk").expect("write corrupt");
+
+        let res = cas.put_verified_bytes(
+            &digest,
+            ArtifactKind::EvidenceBundle,
+            "application/json",
+            bytes,
+            Timestamp(100),
+        );
+        assert!(matches!(res, Err(ServerError::Internal(_))));
     }
 }

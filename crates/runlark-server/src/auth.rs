@@ -115,7 +115,7 @@ pub async fn authorize_member<C: deadpool_postgres::GenericClient + Sync>(
 
     let role_str: String = row.get("role");
     let role = WorkspaceRole::from_str_name(&role_str)
-        .ok_or_else(|| ServerError::BadRequest(format!("invalid stored role: {role_str}")))?;
+        .ok_or_else(|| ServerError::Internal(format!("invalid stored role: {role_str}")))?;
     authorize_workspace_action(role, action)?;
     Ok(role)
 }

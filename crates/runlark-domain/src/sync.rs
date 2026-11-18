@@ -8,8 +8,8 @@ use crate::collaboration::{
 };
 use crate::decision::Decision;
 use crate::id::{
-    CommandId, CommentId, CursorSeq, DraftId, EventSeq, ProjectId, Revision, RunId, RunnerId,
-    TaskId, Timestamp, UserId, WorkspaceId,
+    CommandId, CommentId, CursorSeq, DraftId, EventSeq, LeaseEpoch, ProjectId, Revision, RunId,
+    RunnerId, TaskId, Timestamp, UserId, WorkspaceId,
 };
 use crate::project::ArtifactRef;
 use crate::state::{Run, RunStatus};
@@ -224,7 +224,7 @@ pub struct TeamRunEvent {
     pub run_id: RunId,
     pub seq: EventSeq,
     pub runner_id: RunnerId,
-    pub lease_epoch: u64,
+    pub lease_epoch: LeaseEpoch,
     pub event_type: String,
     pub payload_json: String,
     pub created_at: Timestamp,
@@ -234,7 +234,7 @@ pub struct TeamRunEvent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunnerRunReport {
     pub runner_id: RunnerId,
-    pub lease_epoch: u64,
+    pub lease_epoch: LeaseEpoch,
     pub status: Option<RunStatus>,
     #[serde(default)]
     pub workflow_stage: Option<WorkflowStage>,

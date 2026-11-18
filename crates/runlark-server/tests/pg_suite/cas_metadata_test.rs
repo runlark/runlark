@@ -7,6 +7,8 @@ use runlark_domain::{
     ArtifactDigest, ArtifactKind, AttachArtifactCommand, CommandId, RunId, TeamCommand, Timestamp,
 };
 use runlark_server::cas::sha256_hex;
+use runlark_server::pg::create_pool;
+use std::process::Command;
 
 async fn put_cas_artifact(
     srv: &TestServer,
@@ -173,4 +175,73 @@ async fn verify_ws_b_attach_and_ws_a_content_type(
             .and_then(|v| v.to_str().ok()),
         Some("text/x-patch")
     );
+}
+
+#[tokio::test]
+async fn test_bootstrap_owner_requires_slug_and_rolls_back_atomically_on_conflict() {
+    let srv = spawn_test_server().await;
+    let exe = env!("CARGO_BIN_EXE_runlark-server");
+
+    // Passing --workspace-id without --workspace-slug MUST fail instead of ignoring it.
+    let missing_slug = Command::new(exe)
+        .args([
+            "bootstrap-owner",
+            "--postgres-url",
+            &srv.test_pg_url,
+            "--user-id",
+            "usr_no_slug",
+            "--display-name",
+            "No Slug",
+            "--workspace-id",
+            "ws_ignored",
+        ])
+        .output()
+        .expect("run bootstrap-owner without slug");
+    assert!(!missing_slug.status.success());
+
+    // First bootstrap succeeds with slug "dup-slug".
+    let first = Command::new(exe)
+        .args([
+            "bootstrap-owner",
+            "--postgres-url",
+            &srv.test_pg_url,
+            "--user-id",
+            "usr_boot_1",
+            "--display-name",
+            "First",
+            "--workspace-slug",
+            "dup-slug",
+        ])
+        .output()
+        .expect("run first bootstrap");
+    assert!(first.status.success());
+
+    // Duplicate slug MUST fail and roll back user + auth_tokens atomically (no orphaned token).
+    let dup = Command::new(exe)
+        .args([
+            "bootstrap-owner",
+            "--postgres-url",
+            &format!("  {}  ", srv.test_pg_url),
+            "--user-id",
+            "usr_boot_orphan",
+            "--display-name",
+            "Orphan",
+            "--workspace-slug",
+            "dup-slug",
+        ])
+        .output()
+        .expect("run duplicate slug bootstrap");
+    assert!(!dup.status.success());
+
+    let pool = create_pool(&srv.test_pg_url).expect("pool");
+    let client = pool.get().await.expect("client");
+    let orphan_tokens: i64 = client
+        .query_one(
+            "SELECT COUNT(*) FROM auth_tokens WHERE user_id = 'usr_boot_orphan'",
+            &[],
+        )
+        .await
+        .expect("count orphan tokens")
+        .get(0);
+    assert_eq!(orphan_tokens, 0);
 }

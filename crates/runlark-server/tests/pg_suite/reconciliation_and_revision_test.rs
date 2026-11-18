@@ -6,7 +6,7 @@ use super::harness::{
 use reqwest::StatusCode;
 use runlark_domain::{
     ActorRole, ArtifactDigest, ArtifactKind, AttachArtifactCommand, CancelTeamRunCommand,
-    CommandId, DecisionId, DecisionKind, MoveTaskStageCommand, PolicyDigest, ProjectId,
+    CommandId, DecisionId, DecisionKind, LeaseEpoch, MoveTaskStageCommand, PolicyDigest, ProjectId,
     RecordDecisionCommand, Revision, RunId, RunStatus, RunnerId, RunnerRunReport, RunnerStatus,
     TaskId, TaskStage, TeamCommand, Timestamp, WorkflowStage,
 };
@@ -147,7 +147,7 @@ async fn test_runner_report_human_acceptance_cannot_overwrite_waiting_for_approv
     );
     let to_verify = RunnerRunReport {
         runner_id: RunnerId::from("runner_stage"),
-        lease_epoch: 1,
+        lease_epoch: LeaseEpoch(1),
         status: None,
         workflow_stage: Some(WorkflowStage::Verification),
         head_sha: None,
@@ -169,7 +169,7 @@ async fn test_runner_report_human_acceptance_cannot_overwrite_waiting_for_approv
     // Combining workflow_stage: HumanAcceptance with status: Running MUST return 409 Conflict.
     let conflicting = RunnerRunReport {
         runner_id: RunnerId::from("runner_stage"),
-        lease_epoch: 1,
+        lease_epoch: LeaseEpoch(1),
         status: Some(RunStatus::Running),
         workflow_stage: Some(WorkflowStage::HumanAcceptance),
         head_sha: None,
@@ -442,7 +442,7 @@ async fn setup_pinned_acceptance_run(srv: &super::harness::TestServer, tok: &str
     for stage in [WorkflowStage::Verification, WorkflowStage::HumanAcceptance] {
         let rep = RunnerRunReport {
             runner_id: RunnerId::from("runner_pin"),
-            lease_epoch: 1,
+            lease_epoch: LeaseEpoch(1),
             status: None,
             workflow_stage: Some(stage),
             head_sha: Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()),

@@ -27,7 +27,16 @@ pub mod harness {
         pub test_pg_url: String,
         pub cas_root: PathBuf,
         pub http: Client,
+        shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
         _cas_dir: tempfile::TempDir,
+    }
+
+    impl Drop for TestServer {
+        fn drop(&mut self) {
+            if let Some(tx) = self.shutdown_tx.take() {
+                let _ = tx.send(());
+            }
+        }
     }
 
     pub async fn spawn_test_server() -> TestServer {
@@ -74,8 +83,13 @@ pub mod harness {
             .await
             .expect("bind ephemeral port");
         let addr: SocketAddr = listener.local_addr().expect("local addr");
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
+            let _ = axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.await;
+                })
+                .await;
         });
 
         TestServer {
@@ -83,6 +97,7 @@ pub mod harness {
             test_pg_url,
             cas_root,
             http: Client::new(),
+            shutdown_tx: Some(shutdown_tx),
             _cas_dir: cas_dir,
         }
     }

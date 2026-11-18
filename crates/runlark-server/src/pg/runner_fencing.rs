@@ -5,10 +5,9 @@ use crate::pg::commands::clear_task_active_run_and_emit;
 use crate::pg::{get_client, lock_workspace_write};
 use deadpool_postgres::Pool;
 use runlark_domain::{
-    LeaseEpoch, Revision, Run, RunId, RunOwnership, RunStatus, RunnerId, RunnerRegistration,
-    RunnerRunReport, RunnerStatus, Timestamp, TransitionError, WorkflowStage, WorkspaceAction,
-    WorkspaceId, WorkspaceSyncEvent, advance_run_stage, validate_runner_assignment,
-    validate_runner_fencing,
+    Revision, Run, RunId, RunOwnership, RunStatus, RunnerId, RunnerRegistration, RunnerRunReport,
+    RunnerStatus, Timestamp, TransitionError, WorkflowStage, WorkspaceAction, WorkspaceId,
+    WorkspaceSyncEvent, advance_run_stage, validate_runner_assignment, validate_runner_fencing,
 };
 
 /// Acquires the workspace write lock, verifies current `ManageRunners` authorization, and
@@ -208,12 +207,7 @@ pub async fn report_runner_state(
         .ok_or_else(|| ServerError::NotFound(format!("run not found: {run_id}")))?;
 
     let (mut run, ownership) = row_to_run(&run_row)?;
-    validate_runner_fencing(
-        run_id,
-        &ownership,
-        &report.runner_id,
-        LeaseEpoch(report.lease_epoch),
-    )?;
+    validate_runner_fencing(run_id, &ownership, &report.runner_id, report.lease_epoch)?;
     if run.status.is_terminal() {
         return Err(TransitionError::RunAlreadyTerminated.into());
     }
@@ -482,7 +476,7 @@ async fn append_fenced_run_events(
                 &run_id.as_ref(),
                 &ServerError::to_pg_i64(ev.seq.0)?,
                 &report.runner_id.as_ref(),
-                &ServerError::to_pg_i64(report.lease_epoch)?,
+                &ServerError::to_pg_i64(report.lease_epoch.0)?,
                 &ev.event_type,
                 &ev.payload_json,
                 &ServerError::to_pg_i64(ev.created_at.0)?,

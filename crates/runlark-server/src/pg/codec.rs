@@ -20,9 +20,7 @@ pub(crate) fn str_to_task_kind(raw: &str) -> Result<TaskKind, ServerError> {
     match raw {
         "quick_fix" => Ok(TaskKind::QuickFix),
         "standard" => Ok(TaskKind::Standard),
-        other => Err(ServerError::BadRequest(format!(
-            "unknown task_kind: {other}"
-        ))),
+        other => Err(ServerError::Internal(format!("unknown task_kind: {other}"))),
     }
 }
 
@@ -43,7 +41,7 @@ pub(crate) fn str_to_task_stage(raw: &str) -> Result<TaskStage, ServerError> {
         "in_progress" => Ok(TaskStage::InProgress),
         "acceptance" => Ok(TaskStage::Acceptance),
         "done" => Ok(TaskStage::Done),
-        other => Err(ServerError::BadRequest(format!(
+        other => Err(ServerError::Internal(format!(
             "unknown task_stage: {other}"
         ))),
     }
@@ -66,7 +64,7 @@ pub(crate) fn str_to_workflow_stage(raw: &str) -> Result<WorkflowStage, ServerEr
         "implementation" => Ok(WorkflowStage::Implementation),
         "verification" => Ok(WorkflowStage::Verification),
         "human_acceptance" => Ok(WorkflowStage::HumanAcceptance),
-        other => Err(ServerError::BadRequest(format!(
+        other => Err(ServerError::Internal(format!(
             "unknown workflow_stage: {other}"
         ))),
     }
@@ -95,7 +93,7 @@ pub(crate) fn str_to_run_status(raw: &str) -> Result<RunStatus, ServerError> {
         "completed" => Ok(RunStatus::Completed),
         "failed" => Ok(RunStatus::Failed),
         "interrupted" => Ok(RunStatus::Interrupted),
-        other => Err(ServerError::BadRequest(format!(
+        other => Err(ServerError::Internal(format!(
             "unknown run_status: {other}"
         ))),
     }
@@ -114,7 +112,7 @@ pub(crate) fn str_to_decision_kind(raw: &str) -> Result<DecisionKind, ServerErro
         "accept" => Ok(DecisionKind::Accept),
         "request_changes" => Ok(DecisionKind::RequestChanges),
         "approve_plan" => Ok(DecisionKind::ApprovePlan),
-        other => Err(ServerError::BadRequest(format!(
+        other => Err(ServerError::Internal(format!(
             "unknown decision_kind: {other}"
         ))),
     }
@@ -137,7 +135,7 @@ pub(crate) fn str_to_artifact_kind(raw: &str) -> Result<ArtifactKind, ServerErro
         "wasm_validation" => Ok(ArtifactKind::WasmValidation),
         "plan" => Ok(ArtifactKind::Plan),
         "evidence_bundle" => Ok(ArtifactKind::EvidenceBundle),
-        other => Err(ServerError::BadRequest(format!(
+        other => Err(ServerError::Internal(format!(
             "unknown artifact_kind: {other}"
         ))),
     }
@@ -149,7 +147,7 @@ pub(crate) fn str_to_invitation_status(raw: &str) -> Result<InvitationStatus, Se
         "accepted" => Ok(InvitationStatus::Accepted),
         "revoked" => Ok(InvitationStatus::Revoked),
         "expired" => Ok(InvitationStatus::Expired),
-        other => Err(ServerError::BadRequest(format!(
+        other => Err(ServerError::Internal(format!(
             "unknown invitation_status: {other}"
         ))),
     }
@@ -158,7 +156,7 @@ pub(crate) fn str_to_invitation_status(raw: &str) -> Result<InvitationStatus, Se
 pub(crate) fn row_to_member(row: &Row) -> Result<WorkspaceMember, ServerError> {
     let role_str: String = row.get("role");
     let role = WorkspaceRole::from_str_name(&role_str)
-        .ok_or_else(|| ServerError::BadRequest(format!("unknown workspace role: {role_str}")))?;
+        .ok_or_else(|| ServerError::Internal(format!("unknown workspace role: {role_str}")))?;
     Ok(WorkspaceMember {
         workspace_id: WorkspaceId::from(row.get::<_, String>("workspace_id")),
         user_id: UserId::from(row.get::<_, String>("user_id")),
@@ -171,7 +169,7 @@ pub(crate) fn row_to_member(row: &Row) -> Result<WorkspaceMember, ServerError> {
 pub(crate) fn row_to_invitation(row: &Row) -> Result<WorkspaceInvitation, ServerError> {
     let role_str: String = row.get("role");
     let role = WorkspaceRole::from_str_name(&role_str)
-        .ok_or_else(|| ServerError::BadRequest(format!("unknown invitation role: {role_str}")))?;
+        .ok_or_else(|| ServerError::Internal(format!("unknown invitation role: {role_str}")))?;
     let status_str: String = row.get("status");
     let accepted_at: Option<i64> = row.get("accepted_at");
     let accepted_by: Option<String> = row.get("accepted_by");
@@ -200,7 +198,7 @@ pub(crate) fn row_to_invitation(row: &Row) -> Result<WorkspaceInvitation, Server
 pub(crate) fn row_to_runner(row: &Row) -> Result<RunnerRegistration, ServerError> {
     let status_str: String = row.get("status");
     let status = RunnerStatus::from_str_name(&status_str)
-        .ok_or_else(|| ServerError::BadRequest(format!("unknown runner status: {status_str}")))?;
+        .ok_or_else(|| ServerError::Internal(format!("unknown runner status: {status_str}")))?;
     Ok(RunnerRegistration {
         id: RunnerId::from(row.get::<_, String>("runner_id")),
         workspace_id: WorkspaceId::from(row.get::<_, String>("workspace_id")),

@@ -17,6 +17,51 @@ pub struct IssuedToken {
     pub raw_token: String,
 }
 
+/// Optional workspace parameters for atomic [`bootstrap_owner`] provisioning.
+#[derive(Debug, Clone)]
+pub struct BootstrapWorkspaceSpec {
+    pub workspace_id: Option<WorkspaceId>,
+    pub name: String,
+    pub slug: String,
+}
+
+/// Atomically provisions an initial user + bearer token and (optionally) a workspace in one
+/// `PostgreSQL` transaction so workspace errors never leave orphaned users or tokens.
+///
+/// # Errors
+/// Returns [`ServerError`] if user/token insertion or workspace creation fails.
+pub async fn bootstrap_owner(
+    pool: &Pool,
+    user_id: &UserId,
+    display_name: &str,
+    email: Option<&str>,
+    label: &str,
+    workspace: Option<BootstrapWorkspaceSpec>,
+    now: Timestamp,
+) -> Result<(IssuedToken, Option<WorkspaceId>), ServerError> {
+    if display_name.trim().is_empty() {
+        return Err(ServerError::BadRequest(
+            "display_name must not be empty".to_string(),
+        ));
+    }
+    let mut client = get_client(pool).await?;
+    let tx = client.transaction().await?;
+    let issued = issue_user_token_in_tx(&tx, user_id, display_name, email, label, now).await?;
+    let created_ws_id = if let Some(ws) = workspace {
+        let actor = AuthenticatedUser {
+            user_id: issued.user_id.clone(),
+            display_name: issued.display_name.clone(),
+        };
+        let (created, _) =
+            create_workspace_in_tx(&tx, &actor, ws.workspace_id, &ws.name, &ws.slug, now).await?;
+        Some(created.id)
+    } else {
+        None
+    };
+    tx.commit().await?;
+    Ok((issued, created_ws_id))
+}
+
 /// Inserts or updates a user and issues a fresh bearer token.
 ///
 /// # Errors
@@ -31,6 +76,19 @@ pub async fn issue_user_token(
 ) -> Result<IssuedToken, ServerError> {
     let mut client = get_client(pool).await?;
     let tx = client.transaction().await?;
+    let issued = issue_user_token_in_tx(&tx, user_id, display_name, email, label, now).await?;
+    tx.commit().await?;
+    Ok(issued)
+}
+
+async fn issue_user_token_in_tx(
+    tx: &deadpool_postgres::Transaction<'_>,
+    user_id: &UserId,
+    display_name: &str,
+    email: Option<&str>,
+    label: &str,
+    now: Timestamp,
+) -> Result<IssuedToken, ServerError> {
     let now_i64 = ServerError::to_pg_i64(now.0)?;
 
     tx.execute(
@@ -53,7 +111,6 @@ pub async fn issue_user_token(
     )
     .await?;
 
-    tx.commit().await?;
     Ok(IssuedToken {
         user_id: user_id.clone(),
         display_name: display_name.to_string(),
@@ -73,6 +130,21 @@ pub async fn create_workspace(
     slug: &str,
     now: Timestamp,
 ) -> Result<(Workspace, WorkspaceMember), ServerError> {
+    let mut client = get_client(pool).await?;
+    let tx = client.transaction().await?;
+    let res = create_workspace_in_tx(&tx, actor, workspace_id, name, slug, now).await?;
+    tx.commit().await?;
+    Ok(res)
+}
+
+async fn create_workspace_in_tx(
+    tx: &deadpool_postgres::Transaction<'_>,
+    actor: &AuthenticatedUser,
+    workspace_id: Option<WorkspaceId>,
+    name: &str,
+    slug: &str,
+    now: Timestamp,
+) -> Result<(Workspace, WorkspaceMember), ServerError> {
     if name.trim().is_empty() || slug.trim().is_empty() {
         return Err(ServerError::BadRequest(
             "workspace name and slug must not be empty".to_string(),
@@ -81,9 +153,7 @@ pub async fn create_workspace(
 
     let wid = workspace_id
         .unwrap_or_else(|| WorkspaceId::from(format!("ws_{}", Uuid::new_v4().simple())));
-    let mut client = get_client(pool).await?;
-    let tx = client.transaction().await?;
-    lock_workspace_write(&tx, &wid).await?;
+    lock_workspace_write(tx, &wid).await?;
     let now_i64 = ServerError::to_pg_i64(now.0)?;
 
     let existing_slug = tx
@@ -155,8 +225,6 @@ pub async fn create_workspace(
         ],
     )
     .await?;
-
-    tx.commit().await?;
 
     let workspace = Workspace {
         id: wid,

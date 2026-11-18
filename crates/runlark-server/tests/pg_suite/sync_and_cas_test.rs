@@ -5,7 +5,7 @@ use super::harness::{
 use reqwest::StatusCode;
 use runlark_domain::{
     ActorRole, AddCommentCommand, ArtifactDigest, ArtifactKind, AttachArtifactCommand, CommandId,
-    CommentId, CreateTaskCommand, CreateTeamRunCommand, DecisionId, DecisionKind,
+    CommentId, CreateTaskCommand, CreateTeamRunCommand, DecisionId, DecisionKind, LeaseEpoch,
     MoveTaskStageCommand, PolicyDigest, ProjectId, RecordDecisionCommand, Revision, RunId,
     RunStatus, RunnerId, RunnerRunReport, TaskComment, TaskId, TaskKind, TaskStage, TeamCommand,
     Timestamp, WorkflowStage, WorkspaceEventEnvelope,
@@ -124,7 +124,7 @@ async fn advance_run_to_human_acceptance(srv: &TestServer, tok: &str, wid: &str,
             .bearer_auth(tok)
             .json(&RunnerRunReport {
                 runner_id: RunnerId::from("runner_sync"),
-                lease_epoch: 1,
+                lease_epoch: LeaseEpoch(1),
                 status: None,
                 workflow_stage: Some(stage),
                 head_sha: head,

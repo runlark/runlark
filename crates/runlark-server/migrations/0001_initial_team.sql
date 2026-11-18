@@ -148,6 +148,8 @@ CREATE TABLE IF NOT EXISTS team_attempts (
     UNIQUE (run_id, attempt_no)
 );
 
+CREATE INDEX IF NOT EXISTS idx_team_attempts_workspace ON team_attempts(workspace_id, started_at, attempt_no);
+
 CREATE TABLE IF NOT EXISTS team_decisions (
     decision_id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
