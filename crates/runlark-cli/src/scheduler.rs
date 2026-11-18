@@ -1,8 +1,9 @@
 use crate::state::AppState;
 use crate::worktree::WorktreeManager;
-use runlark_domain::{Run, Timestamp};
+use runlark_domain::{ProjectOwnershipMode, Run, Timestamp};
 use runlark_local::{
-    BoardProjection, ProjectStore, RunQueries, SessionStore, StorageError, open_sqlite,
+    BoardProjection, ProjectStore, RunQueries, SessionStore, StorageError, SyncStore,
+    TeamAuthStore, open_sqlite,
 };
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -193,6 +194,25 @@ impl Scheduler {
                     );
                     continue;
                 };
+                if let ProjectOwnershipMode::TeamManaged { workspace_id, .. } =
+                    SyncStore::get_ownership_mode(conn, pid)?
+                {
+                    let local_runner =
+                        TeamAuthStore::resolve_for_workspace(conn, Some(&workspace_id))?
+                            .and_then(|s| s.runner_id);
+                    let ownership = SyncStore::get_run_ownership(conn, &run.id)?;
+                    let owned_by_me = match (local_runner, ownership) {
+                        (Some(my_rid), Some(own)) => {
+                            own.assigned_runner_id.as_ref() == Some(&my_rid)
+                                && own.lease_epoch.0 > 0
+                                && !own.runner_unreachable
+                        }
+                        _ => false,
+                    };
+                    if !owned_by_me || project.repo_root.trim().is_empty() {
+                        continue;
+                    }
+                }
                 let project_limit = u64::from(project.max_concurrent_runs).min(self.max_slots);
                 let project_active = executing
                     .iter()

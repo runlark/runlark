@@ -8,8 +8,12 @@ pub mod outbox;
 pub mod plugin;
 pub mod repair;
 pub mod routes;
+pub mod runner_agent;
+mod runner_buffer;
 pub mod scheduler;
 pub mod state;
+pub mod team_http;
+pub mod team_sync;
 pub mod verification;
 pub mod worktree;
 
@@ -28,7 +32,12 @@ pub use outbox::{
     OutboxConfig, OutboxDispatcher, OutboxEffector,
 };
 pub use repair::{PipelineError, VerifyPipelineOptions, VerifyPipelineOutcome, WorkflowPipeline};
+pub use runner_agent::{
+    RunOwnershipResponse, RunnerAgentWorker, RunnerStateInput, RunnerTickSummary,
+};
 pub use scheduler::{DEFAULT_MAX_CONCURRENT_SLOTS, Scheduler, SchedulerStatus};
 pub use state::{AppState, StreamEventNotification};
+pub use team_http::TeamServerError;
+pub use team_sync::{TeamCommandSubmissionResult, TeamSyncSummary, TeamSyncWorker};
 pub use verification::VerificationService;
 pub use worktree::{WorktreeError, WorktreeManager, WorktreeResolution};

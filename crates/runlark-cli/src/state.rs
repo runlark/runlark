@@ -21,6 +21,8 @@ pub struct AppState {
     pub outbox_notify: Arc<Notify>,
     pub dsh_notify: Arc<Notify>,
     pub scheduler_notify: Arc<Notify>,
+    pub team_sync_notify: Arc<Notify>,
+    pub runner_notify: Arc<Notify>,
     pub scheduler_admit_lock: Arc<Mutex<()>>,
     pub event_tx: broadcast::Sender<StreamEventNotification>,
     pub shutdown_tx: watch::Sender<bool>,
@@ -60,6 +62,8 @@ impl AppState {
             outbox_notify: Arc::new(Notify::new()),
             dsh_notify: Arc::new(Notify::new()),
             scheduler_notify: Arc::new(Notify::new()),
+            team_sync_notify: Arc::new(Notify::new()),
+            runner_notify: Arc::new(Notify::new()),
             scheduler_admit_lock: Arc::new(Mutex::new(())),
             event_tx,
             shutdown_tx,
@@ -84,6 +88,16 @@ impl AppState {
     /// Wakes the 2-slot scheduler to admit eligible `Queued` runs.
     pub fn notify_scheduler(&self) {
         self.scheduler_notify.notify_one();
+    }
+
+    /// Wakes the background team sync worker to pull events and flush outbox commands.
+    pub fn notify_team_sync(&self) {
+        self.team_sync_notify.notify_one();
+    }
+
+    /// Wakes the background runner agent worker to heartbeat and flush buffered run events.
+    pub fn notify_runner(&self) {
+        self.runner_notify.notify_one();
     }
 
     /// Signals all in-flight long-poll listeners that the daemon is shutting down.

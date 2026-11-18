@@ -70,15 +70,15 @@ pub async fn dispatch_chat_command(
             task_ops::exec_start_run(state, req, &task_id, prompt).await
         }
         runlark_domain::ParsedChatCommand::StopRun { run_id, reason } => {
-            run_ops::exec_stop_run(&state, &run_id, reason, req.command_id)
+            run_ops::exec_stop_run(&state, &run_id, reason, req.command_id).await
         }
         runlark_domain::ParsedChatCommand::ResumeRun { run_id } => {
-            run_ops::exec_resume_run(&state, &run_id, req.command_id)
+            run_ops::exec_resume_run(&state, &run_id, req.command_id).await
         }
         runlark_domain::ParsedChatCommand::AnswerQuestion {
             question_id,
             answer,
-        } => run_ops::exec_answer_question(&state, &question_id, &answer, req.command_id),
+        } => run_ops::exec_answer_question(&state, &question_id, &answer, req.command_id).await,
         runlark_domain::ParsedChatCommand::Accept { target_id, comment } => {
             task_ops::exec_accept_target(state, req, &target_id, comment).await
         }
@@ -100,7 +100,7 @@ pub async fn dispatch_chat_command(
             status_ops::exec_budget(&state, target_id.or(req.run_id).or(req.project_id))
         }
         runlark_domain::ParsedChatCommand::Prompt { text } => {
-            status_ops::exec_prompt(&state, &req, text)
+            status_ops::exec_prompt(&state, &req, text).await
         }
     }
 }

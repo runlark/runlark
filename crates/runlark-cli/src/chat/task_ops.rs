@@ -120,6 +120,7 @@ pub(super) async fn exec_start_run(
             session_id: req.session_id,
             prompt,
             expected_revision: None,
+            runner_id: None,
         })),
     )
     .await?;

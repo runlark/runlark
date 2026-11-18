@@ -2,6 +2,7 @@ use crate::git_pr::{compute_worktree_diff, store_diff_in_cas};
 use crate::routes::error::{ApiError, api_error, deterministic_id, storage_error_to_http};
 use crate::routes::events::EventItemResponse;
 use crate::routes::questions::QuestionResponse;
+use crate::routes::team_gate;
 use crate::state::AppState;
 use axum::Json;
 use axum::body::Body;
@@ -10,8 +11,8 @@ use axum::http::{StatusCode, header};
 use axum::response::Response;
 use runlark_domain::{
     ArtifactDigest, ArtifactRef, Attempt, AttemptId, AttemptOutcome, BoardCommand, CommandId,
-    CostSummary, Decision, RecordAttemptCommand, Revision, Run, RunId, TaskId, Timestamp,
-    WorkflowStage,
+    CostSummary, Decision, RecordAttemptCommand, Revision, Run, RunId, TaskId, TeamCommand,
+    Timestamp, WorkflowStage,
 };
 use runlark_local::{
     ArtifactCasStore, AttemptStore, DecisionStore, EventStore, QuestionStore, RunQueries,
@@ -280,15 +281,53 @@ pub async fn record_run_attempt(
     Path(id): Path<String>,
     Json(req): Json<RecordAttemptRequest>,
 ) -> Result<(StatusCode, Json<RunAttemptsResponse>), ApiError> {
-    let mut conn = state.get_connection().map_err(|e| {
+    let run_id = RunId::from(id);
+    let now = Timestamp(AppState::current_timestamp_ms());
+    let (run, attempt_cmd) = prepare_record_attempt_cmd(&state, &run_id, req, now)?;
+    let team_ctx = team_gate::resolve_run_team_context(&state, &run)?;
+
+    let status = if let Some(ctx) = team_ctx {
+        let team_cmd = TeamCommand::RecordAttempt(attempt_cmd);
+        let res = team_gate::submit_team_command_checked(&state, &ctx, &team_cmd).await?;
+        if res.idempotent_replay {
+            StatusCode::OK
+        } else {
+            StatusCode::CREATED
+        }
+    } else {
+        let mut conn = state.get_connection().map_err(|e| {
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                e.to_string(),
+            )
+        })?;
+        let board_cmd = BoardCommand::RecordAttempt(attempt_cmd);
+        let applied = runlark_local::BoardStore::apply_board_command(&mut conn, &board_cmd, now)
+            .map_err(storage_error_to_http)?;
+        match applied {
+            runlark_local::BoardCommandOutcome::Applied { .. } => StatusCode::CREATED,
+            runlark_local::BoardCommandOutcome::AlreadyExists { .. } => StatusCode::OK,
+        }
+    };
+
+    load_run_attempts_response(&state, &run_id, status)
+}
+
+fn prepare_record_attempt_cmd(
+    state: &AppState,
+    run_id: &RunId,
+    req: RecordAttemptRequest,
+    now: Timestamp,
+) -> Result<(Run, RecordAttemptCommand), ApiError> {
+    let conn = state.get_connection().map_err(|e| {
         api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
             e.to_string(),
         )
     })?;
-    let run_id = RunId::from(id);
-    let run = SessionStore::get_run(&conn, &run_id)
+    let run = SessionStore::get_run(&conn, run_id)
         .map_err(storage_error_to_http)?
         .ok_or_else(|| {
             api_error(
@@ -297,23 +336,16 @@ pub async fn record_run_attempt(
                 format!("Run not found: {run_id}"),
             )
         })?;
-
     let explicit_cmd_id = req.command_id.filter(|s| !s.trim().is_empty());
     let command_id = CommandId::from(
         explicit_cmd_id
             .clone()
             .unwrap_or_else(|| format!("cmd_att_{}", Uuid::new_v4().simple())),
     );
-    let attempt_id = AttemptId::from(
-        req.attempt_id
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| match &explicit_cmd_id {
-                Some(cid) => deterministic_id("att", cid),
-                None => format!("att_{}", Uuid::new_v4().simple()),
-            }),
-    );
-    let prior_rev = if req.expected_revision.is_none() && explicit_cmd_id.is_some() {
-        runlark_local::BoardStore::get_command_payload(&conn, &command_id)
+    let prior_rev = if req.expected_revision.is_none()
+        && let Some(ref cid) = explicit_cmd_id
+    {
+        runlark_local::BoardStore::get_command_payload(&conn, &CommandId::from(cid.clone()))
             .map_err(storage_error_to_http)?
             .and_then(|json| serde_json::from_str::<BoardCommand>(&json).ok())
             .and_then(|c| match c {
@@ -323,10 +355,17 @@ pub async fn record_run_attempt(
     } else {
         None
     };
+    let attempt_id = AttemptId::from(
+        req.attempt_id
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| match &explicit_cmd_id {
+                Some(cid) => deterministic_id("att", cid),
+                None => format!("att_{}", Uuid::new_v4().simple()),
+            }),
+    );
     let expected_revision =
         prior_rev.unwrap_or_else(|| Revision(req.expected_revision.unwrap_or(run.revision.0)));
-    let now = Timestamp(AppState::current_timestamp_ms());
-    let cmd = BoardCommand::RecordAttempt(RecordAttemptCommand {
+    let cmd = RecordAttemptCommand {
         command_id,
         attempt_id,
         run_id: run_id.clone(),
@@ -337,15 +376,23 @@ pub async fn record_run_attempt(
         repair_reason: req.repair_reason,
         expected_revision,
         created_at: now,
-    });
-    let outcome = runlark_local::BoardStore::apply_board_command(&mut conn, &cmd, now);
-    let applied = outcome.map_err(storage_error_to_http)?;
-    let status = match applied {
-        runlark_local::BoardCommandOutcome::Applied { .. } => StatusCode::CREATED,
-        runlark_local::BoardCommandOutcome::AlreadyExists { .. } => StatusCode::OK,
     };
+    Ok((run, cmd))
+}
 
-    let updated_run = SessionStore::get_run(&conn, &run_id)
+fn load_run_attempts_response(
+    state: &AppState,
+    run_id: &RunId,
+    status: StatusCode,
+) -> Result<(StatusCode, Json<RunAttemptsResponse>), ApiError> {
+    let conn = state.get_connection().map_err(|e| {
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "storage_error",
+            e.to_string(),
+        )
+    })?;
+    let updated_run = SessionStore::get_run(&conn, run_id)
         .map_err(storage_error_to_http)?
         .ok_or_else(|| {
             api_error(
@@ -355,14 +402,14 @@ pub async fn record_run_attempt(
             )
         })?;
     let attempts =
-        AttemptStore::list_attempts_for_run(&conn, &run_id).map_err(storage_error_to_http)?;
+        AttemptStore::list_attempts_for_run(&conn, run_id).map_err(storage_error_to_http)?;
     let cost_summary =
-        AttemptStore::cost_summary_for_run(&conn, &run_id, updated_run.cost_summary.held_micro_usd)
+        AttemptStore::cost_summary_for_run(&conn, run_id, updated_run.cost_summary.held_micro_usd)
             .map_err(storage_error_to_http)?;
     Ok((
         status,
         Json(RunAttemptsResponse {
-            run_id: run_id.0,
+            run_id: run_id.0.clone(),
             attempts,
             cost_summary,
         }),

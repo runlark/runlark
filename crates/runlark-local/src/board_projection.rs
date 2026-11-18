@@ -1,13 +1,21 @@
 use crate::attempt_store::AttemptStore;
 use crate::cas_store::ArtifactCasStore;
+use crate::comment_store::CommentStore;
 use crate::connection::from_sql_i64;
 use crate::decision_store::DecisionStore;
+use crate::draft_store::DraftStore;
 use crate::error::StorageError;
 use crate::project_store::ProjectStore;
 use crate::session_store::SessionStore;
+use crate::sync_store::SyncStore;
 use crate::task_store::TaskStore;
-use runlark_domain::{ArtifactRef, CostSummary, Decision, Project, ProjectId, Run, Task, TaskId};
+use runlark_domain::{
+    ArtifactRef, CostSummary, CursorSeq, Decision, OfflineDraft, Project, ProjectId,
+    ProjectOwnershipMode, Run, RunId, RunOwnership, RunnerRegistration, Task, TaskComment, TaskId,
+    WorkspaceMember,
+};
 use rusqlite::{Connection, params};
+use std::collections::HashMap;
 
 const RUN_COLUMNS: &str = concat!(
     "run_id, session_id, status, worktree_path, revision, created_at, updated_at, ",
@@ -15,23 +23,31 @@ const RUN_COLUMNS: &str = concat!(
     "plan_version, policy_digest, budget_json, cost_summary_json, repair_attempts, pr_url"
 );
 
-/// Read-model projection of a single task with its latest run, cost ledger, decisions, and artifacts.
+/// Read-model projection of a single task with its latest run, ownership, cost ledger, comments, decisions, and artifacts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskSummary {
     pub task: Task,
     pub latest_run: Option<Run>,
+    pub latest_run_ownership: Option<RunOwnership>,
     pub cost_summary: CostSummary,
     pub decisions: Vec<Decision>,
+    pub comments: Vec<TaskComment>,
     pub artifacts: Vec<(ArtifactRef, String)>,
 }
 
-/// Full Kanban board projection for a project including 2-slot scheduler occupancy.
+/// Full Kanban board projection for a project including 2-slot scheduler occupancy and team sync state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoardSnapshot {
     pub project: Project,
+    pub ownership_mode: ProjectOwnershipMode,
+    pub last_cursor_seq: CursorSeq,
     pub tasks: Vec<TaskSummary>,
     pub executing_slots_used: u64,
     pub queued_runs: Vec<Run>,
+    pub pending_drafts: Vec<OfflineDraft>,
+    pub runners: Vec<RunnerRegistration>,
+    pub members: Vec<WorkspaceMember>,
+    pub run_ownerships: HashMap<RunId, RunOwnership>,
 }
 
 pub struct BoardProjection;
@@ -116,7 +132,7 @@ impl BoardProjection {
             Some(run_id) => SessionStore::get_run(conn, run_id)?,
             None => None,
         };
-        let (cost_summary, artifacts) = match &latest_run {
+        let (cost_summary, artifacts, latest_run_ownership) = match &latest_run {
             Some(run) => {
                 let summary = AttemptStore::cost_summary_for_run(
                     conn,
@@ -124,17 +140,21 @@ impl BoardProjection {
                     run.cost_summary.held_micro_usd,
                 )?;
                 let artifacts = ArtifactCasStore::list_artifacts_for_run(conn, &run.id)?;
-                (summary, artifacts)
+                let ownership = SyncStore::get_run_ownership(conn, &run.id)?;
+                (summary, artifacts, ownership)
             }
-            None => (CostSummary::default(), Vec::new()),
+            None => (CostSummary::default(), Vec::new(), None),
         };
         let decisions = DecisionStore::list_decisions_for_task(conn, &task.id)?;
+        let comments = CommentStore::list_comments_for_task(conn, &task.id)?;
 
         Ok(TaskSummary {
             task,
             latest_run,
+            latest_run_ownership,
             cost_summary,
             decisions,
+            comments,
             artifacts,
         })
     }
@@ -149,6 +169,18 @@ impl BoardProjection {
     ) -> Result<BoardSnapshot, StorageError> {
         let project = ProjectStore::get_project(conn, project_id)?
             .ok_or_else(|| StorageError::ProjectNotFound(project_id.clone()))?;
+        let binding = SyncStore::get_project_binding(conn, project_id)?;
+        let ownership_mode = binding
+            .as_ref()
+            .map_or(ProjectOwnershipMode::SoloLocal, |b| {
+                b.ownership_mode.clone()
+            });
+        let last_cursor_seq = match &ownership_mode {
+            ProjectOwnershipMode::TeamManaged { workspace_id, .. } => {
+                SyncStore::get_workspace_cursor(conn, workspace_id)?
+            }
+            ProjectOwnershipMode::SoloLocal => CursorSeq(0),
+        };
         let raw_tasks = TaskStore::list_tasks(conn, Some(project_id), None)?;
         let mut tasks = Vec::with_capacity(raw_tasks.len());
         for task in raw_tasks {
@@ -156,12 +188,27 @@ impl BoardProjection {
         }
         let executing_slots_used = Self::count_executing_runs_for_project(conn, project_id)?;
         let queued_runs = Self::list_queued_runs_for_project_fifo(conn, project_id)?;
+        let pending_drafts = DraftStore::list_unresolved_drafts(conn, Some(project_id))?;
+        let (runners, members) = match &ownership_mode {
+            ProjectOwnershipMode::TeamManaged { workspace_id, .. } => (
+                SyncStore::list_runners_for_workspace(conn, workspace_id)?,
+                SyncStore::list_members_for_workspace(conn, workspace_id)?,
+            ),
+            ProjectOwnershipMode::SoloLocal => (Vec::new(), Vec::new()),
+        };
+        let run_ownerships = SyncStore::list_run_ownerships_for_project(conn, project_id)?;
 
         Ok(BoardSnapshot {
             project,
+            ownership_mode,
+            last_cursor_seq,
             tasks,
             executing_slots_used,
             queued_runs,
+            pending_drafts,
+            runners,
+            members,
+            run_ownerships,
         })
     }
 }

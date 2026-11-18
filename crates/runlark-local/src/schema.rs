@@ -11,6 +11,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
         4,
         include_str!("../migrations/0004_a1_board_and_history.sql"),
     ),
+    (
+        5,
+        include_str!("../migrations/0005_a2_collaboration_sync.sql"),
+    ),
 ];
 
 fn current_timestamp_ms() -> u64 {

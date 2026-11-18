@@ -1,6 +1,6 @@
 use runlark_domain::{
-    ArtifactDigest, CommandId, DecisionId, DomainError, ProjectId, QuestionId, RunId, SessionId,
-    TaskId, TransitionError,
+    ArtifactDigest, CommandId, CursorSeq, DecisionId, DomainError, DraftId, ProjectId, QuestionId,
+    RunId, SessionId, TaskId, TransitionError,
 };
 use thiserror::Error;
 
@@ -42,6 +42,18 @@ pub enum StorageError {
 
     #[error("Decision not found: {0}")]
     DecisionNotFound(DecisionId),
+
+    #[error("Offline draft not found: {0}")]
+    DraftNotFound(DraftId),
+
+    #[error("Sync outbox entry not found: {0}")]
+    SyncOutboxNotFound(CommandId),
+
+    #[error("Workspace cursor gap: expected {expected}, got {actual}")]
+    CursorGap {
+        expected: CursorSeq,
+        actual: CursorSeq,
+    },
 
     #[error("Artifact blob not found in CAS: {0}")]
     ArtifactNotFound(ArtifactDigest),

@@ -7,12 +7,15 @@ use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use runlark_domain::{
-    ArtifactRef, Attempt, CostSummary, Decision, ProjectId, Run, Task, TaskStage,
+    ArtifactRef, Attempt, CostSummary, Decision, OfflineDraft, ProjectId, ProjectOwnershipMode,
+    Run, RunOwnership, RunnerRegistration, Task, TaskComment, TaskStage, WorkspaceMember,
 };
 use runlark_local::{
-    AttemptStore, BoardProjection, ProjectStore, QuestionStore, RunQueries, SessionStore,
+    AttemptStore, BoardProjection, CommentStore, ProjectStore, QuestionStore, RunQueries,
+    SessionStore, SyncStore,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
 pub struct BoardQuery {
@@ -30,10 +33,12 @@ pub struct BoardArtifactItem {
 pub struct BoardTaskEntry {
     pub task: Task,
     pub latest_run: Option<Run>,
+    pub latest_run_ownership: Option<RunOwnership>,
     pub session_revision: Option<u64>,
     pub attempts: Vec<Attempt>,
     pub cost_summary: CostSummary,
     pub decisions: Vec<Decision>,
+    pub comments: Vec<TaskComment>,
     pub artifacts: Vec<BoardArtifactItem>,
     pub pending_questions: Vec<QuestionResponse>,
 }
@@ -57,6 +62,8 @@ pub struct SlotSummary {
 #[derive(Debug, Serialize)]
 pub struct BoardResponse {
     pub project: Option<ProjectResponse>,
+    pub ownership_mode: ProjectOwnershipMode,
+    pub last_cursor_seq: u64,
     pub columns: BoardColumns,
     pub tasks: Vec<BoardTaskEntry>,
     pub active_runs: Vec<Run>,
@@ -65,6 +72,10 @@ pub struct BoardResponse {
     pub cost_summary: CostSummary,
     pub decisions: Vec<Decision>,
     pub pending_questions: Vec<QuestionResponse>,
+    pub pending_drafts: Vec<OfflineDraft>,
+    pub runners: Vec<RunnerRegistration>,
+    pub members: Vec<WorkspaceMember>,
+    pub run_ownerships: HashMap<String, RunOwnership>,
     pub slots: SlotSummary,
 }
 
@@ -120,6 +131,8 @@ fn empty_board_response(conn: &runlark_local::Connection) -> Result<BoardRespons
     let used = u64::try_from(active_runs.len()).unwrap_or(u64::MAX);
     Ok(BoardResponse {
         project: None,
+        ownership_mode: ProjectOwnershipMode::SoloLocal,
+        last_cursor_seq: 0,
         columns: BoardColumns {
             inbox: Vec::new(),
             ready: Vec::new(),
@@ -134,6 +147,10 @@ fn empty_board_response(conn: &runlark_local::Connection) -> Result<BoardRespons
         cost_summary: CostSummary::default(),
         decisions: Vec::new(),
         pending_questions: Vec::new(),
+        pending_drafts: Vec::new(),
+        runners: Vec::new(),
+        members: Vec::new(),
+        run_ownerships: HashMap::new(),
         slots: SlotSummary {
             max: DEFAULT_MAX_CONCURRENT_SLOTS,
             used,
@@ -199,10 +216,12 @@ fn build_project_board_response(
         let entry = BoardTaskEntry {
             task: summary.task,
             latest_run: summary.latest_run,
+            latest_run_ownership: summary.latest_run_ownership,
             session_revision,
             attempts,
             cost_summary: summary.cost_summary,
             decisions: summary.decisions,
+            comments: summary.comments,
             artifacts,
             pending_questions: task_questions,
         };
@@ -212,8 +231,16 @@ fn build_project_board_response(
 
     let cost_summary = CostSummary::from_attempts(&all_attempts, total_held);
     let used = snapshot.executing_slots_used;
+    let project_resp = ProjectResponse::from_project_with_binding(conn, snapshot.project)?;
+    let run_ownerships = snapshot
+        .run_ownerships
+        .into_iter()
+        .map(|(k, v)| (k.0, v))
+        .collect();
     Ok(BoardResponse {
-        project: Some(ProjectResponse::from(snapshot.project)),
+        project: Some(project_resp),
+        ownership_mode: snapshot.ownership_mode,
+        last_cursor_seq: snapshot.last_cursor_seq.0,
         columns,
         tasks: entries,
         active_runs,
@@ -222,6 +249,10 @@ fn build_project_board_response(
         cost_summary,
         decisions: all_decisions,
         pending_questions: all_pending_questions,
+        pending_drafts: snapshot.pending_drafts,
+        runners: snapshot.runners,
+        members: snapshot.members,
+        run_ownerships,
         slots: SlotSummary {
             max: max_slots,
             used,
@@ -234,10 +265,12 @@ fn push_column_entry(columns: &mut BoardColumns, entry: &BoardTaskEntry) {
     let copy = BoardTaskEntry {
         task: entry.task.clone(),
         latest_run: entry.latest_run.clone(),
+        latest_run_ownership: entry.latest_run_ownership.clone(),
         session_revision: entry.session_revision,
         attempts: entry.attempts.clone(),
         cost_summary: entry.cost_summary.clone(),
         decisions: entry.decisions.clone(),
+        comments: entry.comments.clone(),
         artifacts: entry
             .artifacts
             .iter()
@@ -291,18 +324,25 @@ pub fn load_enriched_task(
         }
         None => (Vec::new(), Vec::new()),
     };
-    let latest_run = match &summary.latest_run {
-        Some(r) => SessionStore::get_run(conn, &r.id).map_err(storage_error_to_http)?,
-        None => None,
+    let (latest_run, latest_run_ownership) = match &summary.latest_run {
+        Some(r) => (
+            SessionStore::get_run(conn, &r.id).map_err(storage_error_to_http)?,
+            SyncStore::get_run_ownership(conn, &r.id).map_err(storage_error_to_http)?,
+        ),
+        None => (None, None),
     };
+    let comments = CommentStore::list_comments_for_task(conn, &summary.task.id)
+        .map_err(storage_error_to_http)?;
     let session_revision = resolve_session_revision(conn, &summary.task, latest_run.as_ref())?;
     Ok(BoardTaskEntry {
         task: summary.task,
         latest_run,
+        latest_run_ownership,
         session_revision,
         attempts,
         cost_summary: summary.cost_summary,
         decisions: summary.decisions,
+        comments,
         artifacts: summary
             .artifacts
             .into_iter()

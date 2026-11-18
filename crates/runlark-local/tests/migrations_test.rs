@@ -34,6 +34,17 @@ fn test_migrations_fresh_and_idempotent() {
     assert!(tables.contains(&"artifacts".to_string()));
     assert!(tables.contains(&"run_artifacts".to_string()));
     assert!(tables.contains(&"board_commands".to_string()));
+    assert!(tables.contains(&"project_sync_bindings".to_string()));
+    assert!(tables.contains(&"task_comments".to_string()));
+    assert!(tables.contains(&"offline_drafts".to_string()));
+    assert!(tables.contains(&"sync_outbox".to_string()));
+    assert!(tables.contains(&"run_ownership".to_string()));
+    assert!(tables.contains(&"team_workspaces".to_string()));
+    assert!(tables.contains(&"team_members".to_string()));
+    assert!(tables.contains(&"team_runners".to_string()));
+    assert!(tables.contains(&"team_auth_sessions".to_string()));
+    assert!(tables.contains(&"runner_buffered_events".to_string()));
+    assert!(tables.contains(&"synced_cas_blobs".to_string()));
     assert!(tables.contains(&"schema_migrations".to_string()));
 
     let mut mig_stmt = conn
@@ -44,5 +55,5 @@ fn test_migrations_fresh_and_idempotent() {
         .expect("query versions")
         .collect::<Result<Vec<_>, _>>()
         .expect("collect versions");
-    assert_eq!(versions, vec![1, 2, 3, 4]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5]);
 }

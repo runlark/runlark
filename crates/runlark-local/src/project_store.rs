@@ -1,6 +1,10 @@
 use crate::connection::{from_sql_i64, to_sql_i64};
 use crate::error::StorageError;
-use runlark_domain::{BudgetPolicy, PolicyDigest, Project, ProjectId, Revision, Timestamp};
+use crate::session_store::SessionStore;
+use crate::sync_store::SyncStore;
+use runlark_domain::{
+    BudgetPolicy, PolicyDigest, Project, ProjectId, ProjectOwnershipMode, Revision, Run, Timestamp,
+};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 pub struct ProjectStore;
@@ -145,5 +149,36 @@ impl ProjectStore {
             )));
         }
         Ok(())
+    }
+
+    /// Returns the effective [`ProjectOwnershipMode`] (`SoloLocal` or `TeamManaged`) for `project_id`.
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] if querying `project_sync_bindings` fails.
+    pub fn get_ownership_mode(
+        conn: &Connection,
+        project_id: &ProjectId,
+    ) -> Result<ProjectOwnershipMode, StorageError> {
+        SyncStore::get_ownership_mode(conn, project_id)
+    }
+
+    /// Lists all [`Run`] rows associated with `project_id` (directly or via a task in `project_id`).
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] if querying `runs` fails.
+    pub fn list_runs_for_project(
+        conn: &Connection,
+        project_id: &ProjectId,
+    ) -> Result<Vec<Run>, StorageError> {
+        let mut stmt = conn.prepare(concat!(
+            "SELECT run_id, session_id, status, worktree_path, revision, created_at, updated_at, ",
+            "task_id, project_id, workflow_stage, task_kind, workflow_digest, base_sha, head_sha, ",
+            "plan_version, policy_digest, budget_json, cost_summary_json, repair_attempts, pr_url ",
+            "FROM runs ",
+            "WHERE project_id = ?1 OR task_id IN (SELECT task_id FROM tasks WHERE project_id = ?1) ",
+            "ORDER BY created_at ASC, rowid ASC"
+        ))?;
+        let rows = stmt.query_map(params![project_id.as_ref()], SessionStore::row_to_run)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 }

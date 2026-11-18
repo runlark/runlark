@@ -1,4 +1,5 @@
 mod stages;
+mod team_report;
 
 use crate::git_pr::{GitDiffSnapshot, compute_worktree_diff};
 use crate::state::AppState;
@@ -77,6 +78,16 @@ pub enum PipelineError {
 
     #[error("not found: {0}")]
     NotFound(String),
+
+    #[error("team fencing or sync error: {0}")]
+    TeamFencing(String),
+}
+
+struct VerifyContext {
+    run: Run,
+    task: Option<runlark_domain::Task>,
+    project: Option<runlark_domain::Project>,
+    team_lease: Option<team_report::TeamRunLease>,
 }
 
 /// Executes verification, stores CAS artifacts, and drives bounded repair or human acceptance.
@@ -105,11 +116,12 @@ impl WorkflowPipeline {
 
         match current_stage {
             WorkflowStage::Clarification => {
-                Self::advance_stage_with_task(state, run_id, WorkflowStage::Plan, now)?;
+                Self::advance_stage_with_task(state, run_id, WorkflowStage::Plan, now).await?;
                 Ok(None)
             }
             WorkflowStage::Plan => {
-                Self::advance_stage_with_task(state, run_id, WorkflowStage::Implementation, now)?;
+                Self::advance_stage_with_task(state, run_id, WorkflowStage::Implementation, now)
+                    .await?;
                 Ok(None)
             }
             WorkflowStage::Implementation | WorkflowStage::Verification => {
@@ -122,26 +134,37 @@ impl WorkflowPipeline {
         }
     }
 
-    /// Advances a run's `WorkflowStage` and mirrors it onto the parent `Task`.
+    /// Advances a run's `WorkflowStage`, mirrors it onto the parent `Task`, and reports or
+    /// offline-buffers the fenced state update for `TeamManaged` runs.
     ///
     /// # Errors
-    /// Returns [`PipelineError`] on missing entity or invalid workflow stage transition.
-    pub fn advance_stage_with_task(
+    /// Returns [`PipelineError`] on missing entity, fencing conflict, or invalid transition.
+    pub async fn advance_stage_with_task(
         state: &AppState,
         run_id: &RunId,
         target_stage: WorkflowStage,
         now: Timestamp,
     ) -> Result<Run, PipelineError> {
         let mut conn = state.get_connection()?;
-        let (new_run, stored): (Run, Vec<StoredEvent>) = with_immediate_tx(&mut conn, |tx| {
+        let (new_run, stored, lease, task_before): (
+            Run,
+            Vec<StoredEvent>,
+            Option<team_report::TeamRunLease>,
+            Option<team_report::TaskBeforeMeta>,
+        ) = with_immediate_tx(&mut conn, |tx| {
             let run = SessionStore::get_run(tx, run_id)?
                 .ok_or_else(|| StorageError::RunNotFound(run_id.clone()))?;
+            let mut task_opt = match &run.task_id {
+                Some(tid) => TaskStore::get_task(tx, tid)?,
+                None => None,
+            };
+            let lease = team_report::resolve_team_run_lease(tx, &run, task_opt.as_ref())?;
+            let task_before = task_opt.as_ref().map(team_report::TaskBeforeMeta::from);
+
             let outcome = advance_run_stage(&run, target_stage, now)?;
             SessionStore::save_run(tx, &outcome.new_run)?;
 
-            if let Some(tid) = &outcome.new_run.task_id
-                && let Some(mut task) = TaskStore::get_task(tx, tid)?
-            {
+            if let Some(ref mut task) = task_opt {
                 let expected = task.revision;
                 task.workflow_stage = target_stage;
                 if target_stage == WorkflowStage::HumanAcceptance {
@@ -149,15 +172,27 @@ impl WorkflowPipeline {
                 }
                 task.revision = Revision(expected.0 + 1);
                 task.updated_at = now;
-                TaskStore::update_task_with_revision(tx, &task, expected)?;
+                TaskStore::update_task_with_revision(tx, task, expected)?;
             }
 
             let mut stored = Vec::with_capacity(outcome.events.len());
             for ev in &outcome.events {
                 stored.push(EventStore::append_domain_event(tx, run_id, ev, now)?);
             }
-            Ok::<_, PipelineError>((outcome.new_run, stored))
+            Ok::<_, PipelineError>((outcome.new_run, stored, lease, task_before))
         })?;
+        drop(conn);
+        if let Some(ref lease) = lease {
+            team_report::report_stage_advance(
+                state,
+                lease,
+                &new_run,
+                task_before.as_ref(),
+                target_stage,
+                now,
+            )
+            .await?;
+        }
         state.publish_events(&new_run.session_id.0, &stored);
         if new_run.status == RunStatus::WaitingForApproval {
             state.notify_scheduler();
@@ -170,39 +205,29 @@ impl WorkflowPipeline {
     /// transitions either to `HumanAcceptance` (`WaitingForApproval`) or bounded repair / `Failed`.
     ///
     /// # Errors
-    /// Returns [`PipelineError`] if storage, CAS persistence, or Wasmtime execution fails.
+    /// Returns [`PipelineError`] if storage, CAS persistence, team fencing, or Wasmtime fails.
     pub async fn verify_and_advance(
         state: &AppState,
         run_id: &RunId,
         options: VerifyPipelineOptions,
         now: Timestamp,
     ) -> Result<VerifyPipelineOutcome, PipelineError> {
-        let (run, task_opt, project_opt) = Self::load_verify_context(state, run_id)?;
+        let ctx = Self::load_verify_context(state, run_id)?;
+        let (run, task_opt, project_opt, team_lease) =
+            (ctx.run, ctx.task, ctx.project, ctx.team_lease);
+        let started_at_implementation = run.workflow_stage == WorkflowStage::Implementation;
+        let task_before = task_opt.as_ref().map(team_report::TaskBeforeMeta::from);
         let (diff_snap, checks, check_logs) =
             Self::collect_diff_and_checks(state, &run, &options).await?;
 
-        let package_name = options
-            .package_name
-            .unwrap_or_else(|| "solo-default".to_string());
-        let val_input = ValidationInput {
-            task_id: task_opt
-                .as_ref()
-                .map_or_else(|| run.session_id.0.clone(), |t| t.id.0.clone()),
-            run_id: run.id.0.clone(),
-            stage: WasmWorkflowStage::Validate,
-            changed_files: diff_snap.changed_files.clone(),
-            checks: checks.clone(),
-            diff_bytes: diff_snap.diff_bytes,
-            repair_attempt: run.repair_attempts,
-        };
-        let report = state.verification.verify_run_with_digest(
-            &run.id,
-            run.workflow_digest.as_ref(),
-            &package_name,
-            &val_input,
+        let (report, verification_passed) = Self::run_wasm_validation(
+            state,
+            &run,
+            task_opt.as_ref(),
+            &diff_snap,
+            &checks,
+            options.package_name.as_deref(),
         )?;
-        let verification_passed =
-            checks.iter().all(|c| c.passed) && report.verdict == ValidationVerdict::Pass;
 
         let mut conn = open_sqlite(&state.db_path)?;
         let (outcome, buffered_events) = with_immediate_tx(&mut conn, |tx| {
@@ -250,6 +275,24 @@ impl WorkflowPipeline {
             };
             Ok::<_, PipelineError>((outcome, events_out))
         })?;
+        drop(conn);
+
+        if let Some(ref lease) = team_lease {
+            team_report::report_verification_outcome(
+                state,
+                lease,
+                &team_report::VerificationReportInput {
+                    run_id,
+                    started_at_implementation,
+                    head_sha: &diff_snap.head_sha,
+                    base_sha: &diff_snap.base_sha,
+                    task_before: task_before.as_ref(),
+                    outcome: &outcome,
+                    now,
+                },
+            )
+            .await?;
+        }
 
         for (session_id, stored) in buffered_events {
             state.publish_events(&session_id, std::slice::from_ref(&stored));
@@ -262,17 +305,38 @@ impl WorkflowPipeline {
         Ok(outcome)
     }
 
+    fn run_wasm_validation(
+        state: &AppState,
+        run: &Run,
+        task_opt: Option<&runlark_domain::Task>,
+        diff_snap: &GitDiffSnapshot,
+        checks: &[CheckEvidence],
+        package_name: Option<&str>,
+    ) -> Result<(ValidationReport, bool), PipelineError> {
+        let pkg = package_name.unwrap_or("solo-default");
+        let val_input = ValidationInput {
+            task_id: task_opt.map_or_else(|| run.session_id.0.clone(), |t| t.id.0.clone()),
+            run_id: run.id.0.clone(),
+            stage: WasmWorkflowStage::Validate,
+            changed_files: diff_snap.changed_files.clone(),
+            checks: checks.to_vec(),
+            diff_bytes: diff_snap.diff_bytes,
+            repair_attempt: run.repair_attempts,
+        };
+        let report = state.verification.verify_run_with_digest(
+            &run.id,
+            run.workflow_digest.as_ref(),
+            pkg,
+            &val_input,
+        )?;
+        let passed = checks.iter().all(|c| c.passed) && report.verdict == ValidationVerdict::Pass;
+        Ok((report, passed))
+    }
+
     fn load_verify_context(
         state: &AppState,
         run_id: &RunId,
-    ) -> Result<
-        (
-            Run,
-            Option<runlark_domain::Task>,
-            Option<runlark_domain::Project>,
-        ),
-        PipelineError,
-    > {
+    ) -> Result<VerifyContext, PipelineError> {
         let conn = state.get_connection()?;
         let run = SessionStore::get_run(&conn, run_id)?
             .ok_or_else(|| StorageError::RunNotFound(run_id.clone()))?;
@@ -284,7 +348,13 @@ impl WorkflowPipeline {
             Some(pid) => ProjectStore::get_project(&conn, pid)?,
             None => None,
         };
-        Ok((run, task, project))
+        let team_lease = team_report::resolve_team_run_lease(&conn, &run, task.as_ref())?;
+        Ok(VerifyContext {
+            run,
+            task,
+            project,
+            team_lease,
+        })
     }
 
     async fn collect_diff_and_checks(

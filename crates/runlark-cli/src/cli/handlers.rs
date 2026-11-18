@@ -1,5 +1,6 @@
 use crate::cli::client::{DaemonHttpClient, print_output};
 use crate::cli::run_chat_handlers::{handle_task_board, handle_task_pr};
+use crate::cli::team_handlers::{handle_project_promote_team, handle_task_comment};
 use crate::cli::{ProjectAction, TaskAction};
 use serde_json::{Value, json};
 
@@ -69,6 +70,15 @@ pub async fn handle_project(
                     v["repo_root"].as_str().unwrap_or("")
                 )
             })
+        }
+        ProjectAction::PromoteTeam {
+            project_id,
+            server,
+            workspace,
+            token,
+        } => {
+            handle_project_promote_team(client, &project_id, server, workspace, token, json_mode)
+                .await
         }
     }
 }
@@ -338,6 +348,11 @@ async fn handle_task_lifecycle(
             draft,
         } => handle_task_pr(client, &id, title, base_branch, draft, json_mode).await,
         TaskAction::Board { project_id } => handle_task_board(client, project_id, json_mode).await,
+        TaskAction::Comment {
+            task_id,
+            message,
+            run_id,
+        } => handle_task_comment(client, &task_id, message, run_id, json_mode).await,
         _ => unreachable!(),
     }
 }

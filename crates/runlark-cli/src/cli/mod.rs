@@ -1,12 +1,14 @@
 pub mod client;
 pub mod handlers;
 pub mod run_chat_handlers;
+pub mod team_handlers;
 
 use crate::cli::client::DaemonHttpClient;
 use crate::cli::handlers::{
     handle_chat_repl, handle_chat_send, handle_plugin, handle_project, handle_question, handle_run,
     handle_task,
 };
+use crate::cli::team_handlers::{handle_runner, handle_team};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -71,6 +73,16 @@ pub enum Commands {
         #[command(subcommand)]
         action: PluginAction,
     },
+    /// Manage A2 team workspaces, invitations, synchronization, and offline drafts
+    Team {
+        #[command(subcommand)]
+        action: TeamAction,
+    },
+    /// Manage A2 execution runner registration, leases, and unreachable-runner cancellation
+    Runner {
+        #[command(subcommand)]
+        action: RunnerAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -96,6 +108,16 @@ pub enum ProjectAction {
     List,
     /// Show details of a project
     Show { id: String },
+    /// Promote a solo local project into a shared team workspace (requires zero active runs)
+    PromoteTeam {
+        project_id: String,
+        #[arg(long)]
+        server: String,
+        #[arg(long)]
+        workspace: String,
+        #[arg(long)]
+        token: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -193,6 +215,101 @@ pub enum TaskAction {
     Board {
         #[arg(long)]
         project_id: Option<String>,
+    },
+    /// Append an immutable discussion comment onto a task timeline
+    Comment {
+        task_id: String,
+        message: String,
+        #[arg(long)]
+        run_id: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum TeamAction {
+    /// Authenticate against a Runlark collaboration server
+    Login {
+        #[arg(long)]
+        server: String,
+        #[arg(long)]
+        token: String,
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// List workspace members and roles
+    Members {
+        #[arg(long)]
+        workspace: String,
+    },
+    /// Create a workspace membership invitation
+    Invite {
+        #[arg(long)]
+        workspace: String,
+        #[arg(long)]
+        invitee: String,
+        #[arg(long, default_value = "member")]
+        role: String,
+        #[arg(long)]
+        ttl_ms: Option<u64>,
+    },
+    /// Accept a workspace invitation token and pull initial workspace snapshot
+    AcceptInvite {
+        #[arg(long)]
+        server: String,
+        #[arg(long)]
+        token: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        user_id: Option<String>,
+    },
+    /// Synchronize outbox commands, events/snapshots, and CAS artifacts with the team server
+    Sync {
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// List local offline drafts and queued/conflicted sync outbox commands
+    Drafts {
+        #[arg(long)]
+        project_id: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum RunnerAction {
+    /// Register this local daemon as a team execution runner
+    Register {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        workspace: Option<String>,
+        #[arg(long)]
+        runner_id: Option<String>,
+    },
+    /// Show local runner identity, buffered event queue, and workspace runners
+    Status {
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Exclusively assign an online runner to a run
+    Assign {
+        run_id: String,
+        #[arg(long)]
+        runner_id: String,
+        #[arg(long)]
+        workspace: Option<String>,
+        #[arg(long)]
+        expected_revision: Option<u64>,
+    },
+    /// Explicitly cancel an unreachable runner's active run without silent takeover
+    CancelUnreachable {
+        run_id: String,
+        #[arg(long)]
+        reason: String,
+        #[arg(long)]
+        workspace: Option<String>,
+        #[arg(long)]
+        expected_revision: Option<u64>,
     },
 }
 
@@ -319,5 +436,7 @@ pub async fn run_cli(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send + 
             } => handle_chat_repl(&client, project_id, session_id).await,
         },
         Commands::Plugin { action } => handle_plugin(&client, action, json_mode).await,
+        Commands::Team { action } => handle_team(&client, action, json_mode).await,
+        Commands::Runner { action } => handle_runner(&client, action, json_mode).await,
     }
 }
