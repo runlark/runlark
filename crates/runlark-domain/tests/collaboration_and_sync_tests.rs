@@ -104,7 +104,7 @@ fn test_runner_assignment_fencing_and_no_auto_takeover() {
         Err(TransitionError::ActiveRunPreventsTakeover { .. })
     ));
 
-    // Fencing checks reject wrong runner or stale epoch.
+    // Fencing checks reject wrong runner, stale epoch, or higher unowned epoch.
     assert!(validate_runner_fencing(&run_id, &owned_by_a, &r_a.id, LeaseEpoch(1)).is_ok());
     assert!(matches!(
         validate_runner_fencing(&run_id, &owned_by_a, &r_b.id, LeaseEpoch(1)),
@@ -112,6 +112,10 @@ fn test_runner_assignment_fencing_and_no_auto_takeover() {
     ));
     assert!(matches!(
         validate_runner_fencing(&run_id, &owned_by_a, &r_a.id, LeaseEpoch(0)),
+        Err(TransitionError::RunnerFencingMismatch { .. })
+    ));
+    assert!(matches!(
+        validate_runner_fencing(&run_id, &owned_by_a, &r_a.id, LeaseEpoch(2)),
         Err(TransitionError::RunnerFencingMismatch { .. })
     ));
 }

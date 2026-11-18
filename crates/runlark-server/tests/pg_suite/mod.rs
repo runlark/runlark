@@ -48,6 +48,7 @@ pub mod harness {
             "RUNLARK_TEST_POSTGRES_URL must be set to run real PostgreSQL integration tests",
         );
         let db_name = format!("runlark_test_{}", Uuid::new_v4().simple());
+        let test_pg_url = replace_db_in_url(&base_pg_url, &db_name);
 
         let (admin_client, conn) = tokio_postgres::connect(&base_pg_url, NoTls)
             .await
@@ -60,7 +61,6 @@ pub mod harness {
             .await
             .expect("create isolated test database");
 
-        let test_pg_url = replace_db_in_url(&base_pg_url, &db_name);
         let cas_dir = tempfile::tempdir().expect("create temp cas dir");
         let cas_root = cas_dir.path().to_path_buf();
         let config = ServerConfig {
@@ -107,14 +107,47 @@ pub mod harness {
             Some((p, q)) => (p, Some(q)),
             None => (url, None),
         };
-        let base = match prefix.rsplit_once('/') {
-            Some((head, _)) => format!("{head}/{db_name}"),
-            None => format!("{prefix}/{db_name}"),
-        };
+        let (scheme, rest) = prefix
+            .split_once("://")
+            .expect("RUNLARK_TEST_POSTGRES_URL must include postgres:// scheme");
+        let (authority, existing_db) = rest
+            .rsplit_once('/')
+            .filter(|(auth, db)| !auth.is_empty() && !db.is_empty())
+            .unwrap_or_else(|| {
+                panic!(
+                    "RUNLARK_TEST_POSTGRES_URL must include a non-empty '/<db>' path segment: {url}"
+                )
+            });
+        assert!(
+            !authority.contains('/'),
+            "RUNLARK_TEST_POSTGRES_URL must not contain extra path segments: {url}"
+        );
+        let _ = existing_db;
+        let base = format!("{scheme}://{authority}/{db_name}");
         match query {
             Some(q) => format!("{base}?{q}"),
             None => base,
         }
+    }
+
+    #[test]
+    fn replace_db_in_url_preserves_authority_and_query() {
+        assert_eq!(
+            replace_db_in_url(
+                "postgres://postgres:postgres@127.0.0.1:5432/runlark_test?sslmode=disable",
+                "runlark_test_123"
+            ),
+            "postgres://postgres:postgres@127.0.0.1:5432/runlark_test_123?sslmode=disable"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "RUNLARK_TEST_POSTGRES_URL must include a non-empty '/<db>'")]
+    fn replace_db_in_url_rejects_missing_db_segment() {
+        let _ = replace_db_in_url(
+            "postgres://postgres:postgres@127.0.0.1:5432",
+            "runlark_test_123",
+        );
     }
 
     pub async fn bootstrap_user(srv: &TestServer, user_id: &str, name: &str) -> String {

@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS workspace_members (
     PRIMARY KEY (workspace_id, user_id)
 );
 
+CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(user_id);
+
 CREATE TABLE IF NOT EXISTS workspace_invitations (
     invite_id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
