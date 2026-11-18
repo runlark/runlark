@@ -249,15 +249,7 @@ pub struct ServerPromotionAck {
 /// # Errors
 /// Returns [`TransitionError::SoloToTeamBlockedByActiveRuns`] if any run is non-terminal.
 pub fn validate_solo_to_team_promotion(runs: &[Run]) -> Result<(), TransitionError> {
-    let blocking = runs
-        .iter()
-        .filter(|run| {
-            !matches!(
-                run.status,
-                RunStatus::Completed | RunStatus::Failed | RunStatus::Stopped
-            )
-        })
-        .count();
+    let blocking = runs.iter().filter(|run| !run.status.is_terminal()).count();
     if blocking > 0 {
         return Err(TransitionError::SoloToTeamBlockedByActiveRuns {
             active_runs: blocking,
@@ -347,7 +339,9 @@ pub fn validate_runner_assignment(
             owner_runner_id: current_owner.clone(),
         });
     }
-    if ownership.assigned_runner_id.as_ref() == Some(&target_runner.id) {
+    if ownership.assigned_runner_id.as_ref() == Some(&target_runner.id)
+        && ownership.lease_epoch.0 > 0
+    {
         return Ok(ownership.lease_epoch);
     }
     Ok(LeaseEpoch(ownership.lease_epoch.0.saturating_add(1)))

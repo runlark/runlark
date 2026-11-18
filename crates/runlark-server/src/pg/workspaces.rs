@@ -89,6 +89,16 @@ async fn issue_user_token_in_tx(
     label: &str,
     now: Timestamp,
 ) -> Result<IssuedToken, ServerError> {
+    if user_id.0.trim().is_empty() {
+        return Err(ServerError::BadRequest(
+            "user_id must not be empty".to_string(),
+        ));
+    }
+    if display_name.trim().is_empty() {
+        return Err(ServerError::BadRequest(
+            "display_name must not be empty".to_string(),
+        ));
+    }
     let now_i64 = ServerError::to_pg_i64(now.0)?;
 
     tx.execute(
@@ -145,6 +155,13 @@ async fn create_workspace_in_tx(
     slug: &str,
     now: Timestamp,
 ) -> Result<(Workspace, WorkspaceMember), ServerError> {
+    if let Some(ref id) = workspace_id
+        && id.0.trim().is_empty()
+    {
+        return Err(ServerError::BadRequest(
+            "workspace_id must not be empty".to_string(),
+        ));
+    }
     if name.trim().is_empty() || slug.trim().is_empty() {
         return Err(ServerError::BadRequest(
             "workspace name and slug must not be empty".to_string(),

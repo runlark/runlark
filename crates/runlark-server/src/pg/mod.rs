@@ -15,6 +15,7 @@ use deadpool_postgres::{
 use tokio_postgres::{IsolationLevel, NoTls};
 
 const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("../../migrations/0001_initial_team.sql"))];
+const MIGRATION_LOCK_KEY: &str = "runlark-schema-migrations";
 
 /// Creates a `deadpool_postgres::Pool` from a `PostgreSQL` connection URL.
 ///
@@ -40,36 +41,41 @@ pub async fn run_migrations(pool: &Pool) -> Result<(), ServerError> {
         .await
         .map_err(|e| ServerError::Pool(e.to_string()))?;
 
-    client
-        .batch_execute(
-            "CREATE TABLE IF NOT EXISTS schema_migrations (
-                version BIGINT PRIMARY KEY,
-                applied_at BIGINT NOT NULL
-            );",
-        )
-        .await?;
+    let tx = client.transaction().await?;
+    tx.query_one(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        &[&MIGRATION_LOCK_KEY],
+    )
+    .await?;
+
+    tx.batch_execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations (
+            version BIGINT PRIMARY KEY,
+            applied_at BIGINT NOT NULL
+        );",
+    )
+    .await?;
 
     let now = ServerError::to_pg_i64(crate::config::ServerConfig::current_timestamp_ms())?;
 
     for &(version, sql) in MIGRATIONS {
-        let existing = client
+        let existing = tx
             .query_opt(
                 "SELECT version FROM schema_migrations WHERE version = $1",
                 &[&version],
             )
             .await?;
         if existing.is_none() {
-            let tx = client.transaction().await?;
             tx.batch_execute(sql).await?;
             tx.execute(
                 "INSERT INTO schema_migrations (version, applied_at) VALUES ($1, $2)",
                 &[&version, &now],
             )
             .await?;
-            tx.commit().await?;
         }
     }
 
+    tx.commit().await?;
     Ok(())
 }
 

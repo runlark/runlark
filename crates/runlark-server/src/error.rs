@@ -219,17 +219,40 @@ mod tests {
 
     #[tokio::test]
     async fn internal_errors_redact_details_from_http_500_responses() {
+        let json_err = serde_json::from_str::<serde_json::Value>("secret-invalid-json")
+            .expect_err("invalid json");
         let cases = [
-            ServerError::Pool("secret-pg-password-leak".to_string()),
-            ServerError::Io(std::io::Error::other("/var/lib/runlark/secret/path")),
-            ServerError::Internal("corrupt row details".to_string()),
+            (
+                ServerError::Pool("secret-pg-password-leak".to_string()),
+                "pool_error",
+                "internal database error",
+            ),
+            (
+                ServerError::Io(std::io::Error::other("/var/lib/runlark/secret/path")),
+                "io_error",
+                "internal storage error",
+            ),
+            (
+                ServerError::Json(json_err),
+                "internal_json_error",
+                "internal server error",
+            ),
+            (
+                ServerError::Internal("corrupt row details".to_string()),
+                "internal_error",
+                "internal server error",
+            ),
         ];
-        for err in cases {
+        for (err, expected_code, expected_msg) in cases {
             let resp = err.into_response();
             assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
             let bytes = axum::body::to_bytes(resp.into_body(), 4096)
                 .await
                 .expect("read body");
+            let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json body");
+            assert_eq!(body["error"].as_str(), Some(expected_code));
+            assert_eq!(body["message"].as_str(), Some(expected_msg));
+            assert!(body.get("current_revision").is_none());
             let text = String::from_utf8(bytes.to_vec()).expect("utf8");
             assert!(!text.contains("secret"));
             assert!(!text.contains("corrupt"));

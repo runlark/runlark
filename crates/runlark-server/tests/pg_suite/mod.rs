@@ -102,7 +102,7 @@ pub mod harness {
         }
     }
 
-    fn replace_db_in_url(url: &str, db_name: &str) -> String {
+    pub fn replace_db_in_url(url: &str, db_name: &str) -> String {
         let (prefix, query) = match url.split_once('?') {
             Some((p, q)) => (p, Some(q)),
             None => (url, None),

@@ -1,14 +1,16 @@
 use super::harness::{
     TestServer, bootstrap_user, create_ws, get_snapshot, post_command, promote_project,
-    sample_run_cmd, sample_task_cmd, spawn_test_server,
+    replace_db_in_url, sample_run_cmd, sample_task_cmd, spawn_test_server,
 };
 use reqwest::StatusCode;
 use runlark_domain::{
     ArtifactDigest, ArtifactKind, AttachArtifactCommand, CommandId, RunId, TeamCommand, Timestamp,
 };
 use runlark_server::cas::sha256_hex;
-use runlark_server::pg::create_pool;
+use runlark_server::pg::{create_pool, run_migrations};
 use std::process::Command;
+use tokio_postgres::NoTls;
+use uuid::Uuid;
 
 async fn put_cas_artifact(
     srv: &TestServer,
@@ -244,4 +246,66 @@ async fn test_bootstrap_owner_requires_slug_and_rolls_back_atomically_on_conflic
         .expect("count orphan tokens")
         .get(0);
     assert_eq!(orphan_tokens, 0);
+
+    // Empty/whitespace-only --user-id or --workspace-id MUST be rejected.
+    for extra_args in [
+        vec!["--user-id", "  ", "--display-name", "Blank User"],
+        vec![
+            "--user-id",
+            "usr_blank_ws",
+            "--display-name",
+            "Valid",
+            "--workspace-slug",
+            "valid-slug",
+            "--workspace-id",
+            "   ",
+        ],
+    ] {
+        let out = Command::new(exe)
+            .args(["bootstrap-owner", "--postgres-url", &srv.test_pg_url])
+            .args(extra_args)
+            .output()
+            .expect("run blank id bootstrap");
+        assert!(!out.status.success());
+    }
+}
+
+#[tokio::test]
+async fn test_concurrent_run_migrations_on_empty_database() {
+    let base_pg_url =
+        std::env::var("RUNLARK_TEST_POSTGRES_URL").expect("RUNLARK_TEST_POSTGRES_URL must be set");
+    let db_name = format!("runlark_mig_race_{}", Uuid::new_v4().simple());
+    let (admin_client, conn) = tokio_postgres::connect(&base_pg_url, NoTls)
+        .await
+        .expect("connect admin");
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    admin_client
+        .batch_execute(&format!("CREATE DATABASE {db_name}"))
+        .await
+        .expect("create empty test db");
+
+    let test_pg_url = replace_db_in_url(&base_pg_url, &db_name);
+    let pool = create_pool(&test_pg_url).expect("pool");
+
+    let mut handles = Vec::new();
+    for _ in 0..6 {
+        let p = pool.clone();
+        handles.push(tokio::spawn(async move { run_migrations(&p).await }));
+    }
+    for handle in handles {
+        handle
+            .await
+            .expect("join migration task")
+            .expect("concurrent run_migrations must succeed");
+    }
+
+    let client = pool.get().await.expect("client");
+    let count: i64 = client
+        .query_one("SELECT COUNT(*) FROM schema_migrations", &[])
+        .await
+        .expect("count migrations")
+        .get(0);
+    assert_eq!(count, 1);
 }

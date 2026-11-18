@@ -91,10 +91,20 @@ fn test_runner_assignment_fencing_and_no_auto_takeover() {
         runner_unreachable: true,
     };
 
-    // Re-confirming same online runner keeps existing lease_epoch.
+    // Re-confirming same online runner keeps existing non-zero lease_epoch, and promotes 0 -> 1.
     assert_eq!(
         validate_runner_assignment(&run_id, RunStatus::Running, &owned_by_a, &r_a)
             .expect("same runner keeps epoch"),
+        LeaseEpoch(1)
+    );
+    let zero_epoch_owned = RunOwnership {
+        assigned_runner_id: Some(r_a.id.clone()),
+        lease_epoch: LeaseEpoch(0),
+        runner_unreachable: false,
+    };
+    assert_eq!(
+        validate_runner_assignment(&run_id, RunStatus::Running, &zero_epoch_owned, &r_a)
+            .expect("idempotent re-assign never returns epoch 0"),
         LeaseEpoch(1)
     );
 

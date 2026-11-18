@@ -99,6 +99,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             workspace_name,
             workspace_slug,
         } => {
+            if user_id.trim().is_empty() {
+                return Err("--user-id must not be empty".into());
+            }
+            if workspace_id
+                .as_deref()
+                .is_some_and(|id| id.trim().is_empty())
+            {
+                return Err("--workspace-id must not be empty".into());
+            }
             if workspace_slug.is_none() && (workspace_id.is_some() || workspace_name.is_some()) {
                 return Err(
                     "--workspace-slug is required when --workspace-id or --workspace-name is specified"
