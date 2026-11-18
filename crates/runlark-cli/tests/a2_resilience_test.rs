@@ -9,11 +9,16 @@ use axum::{Json, Router};
 use reqwest::Client;
 use runlark_cli::RunnerAgentWorker;
 use runlark_domain::{
-    EventSeq, LeaseEpoch, RunId, RunnerEventInput, RunnerId, RunnerRegistration, RunnerRunReport,
-    RunnerStatus, Timestamp, UserId, WorkspaceId,
+    BudgetPolicy, CursorSeq, EventSeq, LeaseEpoch, PolicyDigest, Project, ProjectId, Revision,
+    RunId, RunnerEventInput, RunnerId, RunnerRegistration, RunnerRunReport, RunnerStatus,
+    ServerPromotionAck, Session, SessionId, SessionStatus, Task, TaskId, TaskKind, TaskStage,
+    TeamProjectSpec, Timestamp, UserId, WorkflowStage, WorkspaceId,
 };
-use runlark_local::{RunnerBufferStore, SyncStore, TeamAuthSession, TeamAuthStore, open_sqlite};
-use serde_json::json;
+use runlark_local::{
+    ProjectStore, RunnerBufferStore, SessionStore, SyncStore, TaskStore, TeamAuthSession,
+    TeamAuthStore, open_sqlite,
+};
+use serde_json::{Value, json};
 use tempfile::TempDir;
 
 async fn spawn_err_and_ok_servers() -> (
@@ -186,7 +191,7 @@ async fn cli_accept_invite_reports_token_saved_status() {
 
     let out = tokio::task::spawn_blocking(move || {
         std::process::Command::new(env!("CARGO_BIN_EXE_runlark"))
-            .env("RUNLARK_INVITE_TOKEN", "inv_tok_env")
+            .env("RUNLARK_TEAM_INVITE_TOKEN", "inv_tok_env")
             .args([
                 "--daemon-url",
                 &base,
@@ -210,4 +215,153 @@ async fn cli_accept_invite_reports_token_saved_status() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("session token NOT saved"), "got: {stdout}");
     srv.abort();
+}
+
+fn seed_stage_test_project(db_path: &std::path::Path, mock_url: &str, plan_task: &Task) {
+    let mut conn = open_sqlite(db_path).unwrap();
+    ProjectStore::create_project(
+        &conn,
+        &Project::new(
+            ProjectId::from("prj_st"),
+            "Stage",
+            "/tmp",
+            "main",
+            BudgetPolicy::default(),
+            PolicyDigest::from("pol_st"),
+            Timestamp(1_000),
+        ),
+    )
+    .unwrap();
+    SyncStore::promote_project_to_team_atomic(
+        &mut conn,
+        &ProjectId::from("prj_st"),
+        mock_url,
+        &ServerPromotionAck {
+            workspace_id: WorkspaceId::from("ws_st"),
+            project_id: ProjectId::from("prj_st"),
+            ownership_epoch: 1,
+            initial_cursor: CursorSeq(0),
+            acknowledged_at: Timestamp(1_000),
+        },
+        Timestamp(1_000),
+    )
+    .unwrap();
+    TaskStore::create_task(&conn, plan_task).ok();
+    SessionStore::create_session(
+        &conn,
+        &Session {
+            id: SessionId::from("ses_plan_prompt"),
+            task_id: TaskId::from("tsk_plan_prompt"),
+            cwd: "/tmp".to_string(),
+            status: SessionStatus::Active,
+            current_revision: Revision(1),
+            active_run_id: None,
+            created_at: Timestamp(1_000),
+            updated_at: Timestamp(1_000),
+        },
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn team_prompt_reports_actual_workflow_stage_and_empty_command_id_falls_back() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("runlark.db");
+    let (daemon_url, _state, _sd, daemon_handle) = spawn_daemon(&db_path).await;
+    let mock_state = MockTeamServerState::new("ws_st", "Stage", "stage", None);
+    let plan_task = Task {
+        id: TaskId::from("tsk_plan_prompt"),
+        project_id: ProjectId::from("prj_st"),
+        title: "Plan prompt".to_string(),
+        description: String::new(),
+        kind: TaskKind::Standard,
+        stage: TaskStage::Ready,
+        workflow_stage: WorkflowStage::Plan,
+        plan_text: None,
+        plan_version: 1,
+        base_ref: Some("main".to_string()),
+        head_ref: None,
+        pr_url: None,
+        active_session_id: None,
+        active_run_id: None,
+        latest_run_id: None,
+        budget_override: None,
+        revision: Revision(1),
+        created_at: Timestamp(1_000),
+        updated_at: Timestamp(1_000),
+    };
+    {
+        let mut d = mock_state.inner.lock().await;
+        d.snapshot.projects.push(TeamProjectSpec {
+            project_id: ProjectId::from("prj_st"),
+            workspace_id: WorkspaceId::from("ws_st"),
+            name: "Stage".to_string(),
+            default_branch: "main".to_string(),
+            max_concurrent_runs: 2,
+            budget_policy: BudgetPolicy::default(),
+            policy_digest: PolicyDigest::from("pol_st"),
+            ownership_epoch: 1,
+            revision: Revision(1),
+            created_at: Timestamp(1_000),
+            updated_at: Timestamp(1_000),
+        });
+        d.snapshot.tasks.push(plan_task.clone());
+    }
+    let mock_app = Router::new()
+        .route("/api/v1/auth/whoami", get(mock_whoami))
+        .route("/api/v1/workspaces/{wid}/sync/snapshot", get(mock_snapshot))
+        .route("/api/v1/workspaces/{wid}/sync/events", get(mock_events))
+        .route("/api/v1/workspaces/{wid}/commands", post(mock_commands))
+        .with_state(mock_state);
+    let mock_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_url = format!("http://{}", mock_listener.local_addr().unwrap());
+    let mock_handle = tokio::spawn(async move {
+        let _ = axum::serve(mock_listener, mock_app).await;
+    });
+
+    seed_stage_test_project(&db_path, &mock_url, &plan_task);
+
+    let http = Client::new();
+    assert_eq!(
+        http.post(format!("{daemon_url}/api/v1/team/login"))
+            .json(
+                &json!({ "server_url": mock_url, "bearer_token": "tok", "workspace_id": "ws_st" })
+            )
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+
+    let prompt_resp: Value = http
+        .post(format!("{daemon_url}/api/v1/chat/dispatch"))
+        .json(&json!({
+            "input": "start from prompt",
+            "session_id": "ses_plan_prompt",
+            "command_id": "cmd_plan_prompt_1"
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(prompt_resp["data"]["workflow_stage"], "plan");
+
+    let new_run_id = prompt_resp["data"]["run_id"].as_str().unwrap().to_string();
+    for _ in 0..2 {
+        assert_eq!(
+            http.post(format!("{daemon_url}/api/v1/chat/dispatch"))
+                .json(&json!({ "input": format!("/resume {new_run_id}"), "command_id": "   " }))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            200
+        );
+    }
+
+    daemon_handle.abort();
+    mock_handle.abort();
 }

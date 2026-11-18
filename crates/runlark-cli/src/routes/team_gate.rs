@@ -8,10 +8,11 @@ use crate::state::AppState;
 use crate::team_sync::{TeamCommandSubmissionResult, TeamSyncWorker};
 use axum::http::StatusCode;
 use runlark_domain::{
-    ProjectId, ProjectOwnershipMode, Run, RunId, RunStatus, RunnerId, SessionCommand, Task, TaskId,
-    TeamCommand, WorkspaceId,
+    CancelTeamRunCommand, CommandId, DomainEvent, ProjectId, ProjectOwnershipMode, Revision, Run,
+    RunId, RunStatus, RunnerId, SessionCommand, SessionId, Task, TaskId, TeamCommand, Timestamp,
+    WorkspaceId,
 };
-use runlark_local::{SessionStore, SyncStore, TaskStore, TeamAuthStore};
+use runlark_local::{EventStore, SessionStore, SyncStore, TaskStore, TeamAuthStore};
 
 /// Resolved server connection context for a `TeamManaged` project.
 #[derive(Debug, Clone)]
@@ -268,4 +269,67 @@ pub async fn sync_team_run_resumed_if_leased(
             "Failed to report resumed team run state after local DSH command: {err}"
         );
     }
+}
+
+/// Submits `TeamCommand::CancelRun` to `runlark-server` and, when newly applied, publishes the
+/// local `RunCancelRequested` event and wakes DSH subscriber and scheduler.
+///
+/// # Errors
+/// Returns `503` if offline, `409` on revision/state conflict, or `403` on RBAC denial.
+pub async fn submit_team_cancel_run(
+    state: &AppState,
+    ctx: &TeamProjectContext,
+    target_run: &Run,
+    command_id: &CommandId,
+    reason: Option<String>,
+    expected_revision: Revision,
+    now: Timestamp,
+) -> Result<TeamCommandSubmissionResult, ApiError> {
+    let cancel_reason = reason
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "Cancelled by operator".to_string());
+    let team_cmd = TeamCommand::CancelRun(CancelTeamRunCommand {
+        command_id: command_id.clone(),
+        run_id: target_run.id.clone(),
+        reason: cancel_reason.clone(),
+        expected_revision,
+        created_at: now,
+    });
+    let res = submit_team_command_checked(state, ctx, &team_cmd).await?;
+    if !res.idempotent_replay {
+        publish_team_cancel_event(
+            state,
+            &target_run.id,
+            &target_run.session_id,
+            command_id,
+            Some(cancel_reason),
+            now,
+        );
+    }
+    Ok(res)
+}
+
+/// Persists and publishes a local `RunCancelRequested` event and wakes the DSH subscriber and
+/// scheduler after `TeamCommand::CancelRun` is acknowledged by `runlark-server`.
+pub fn publish_team_cancel_event(
+    state: &AppState,
+    run_id: &RunId,
+    session_id: &SessionId,
+    command_id: &CommandId,
+    reason: Option<String>,
+    now: Timestamp,
+) {
+    let ev = DomainEvent::RunCancelRequested {
+        run_id: run_id.clone(),
+        command_id: command_id.clone(),
+        reason,
+        timestamp: now,
+    };
+    if let Ok(conn) = state.get_connection()
+        && let Ok(stored) = EventStore::append_domain_event(&conn, run_id, &ev, now)
+    {
+        state.publish_events(&session_id.0, &[stored]);
+    }
+    state.notify_dsh_subscriber();
+    state.notify_scheduler();
 }

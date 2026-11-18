@@ -286,6 +286,18 @@ pub(super) async fn exec_prompt(
             crate::routes::commands::submit_team_session_command(state, &cmd, team, now).await?
     {
         let created_run_id = resp.run_id.unwrap_or_else(|| run_id.0.clone());
+        let workflow_stage = {
+            let conn = state.get_connection().map_err(|e| {
+                api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "storage_error",
+                    e.to_string(),
+                )
+            })?;
+            SessionStore::get_run(&conn, &RunId::from(created_run_id.as_str()))
+                .map_err(storage_error_to_http)?
+                .map_or(WorkflowStage::Implementation, |r| r.workflow_stage)
+        };
         return Ok((
             status,
             ChatDispatchResponse {
@@ -297,7 +309,7 @@ pub(super) async fn exec_prompt(
                 data: json!({
                     "session_id": session.id.0,
                     "run_id": created_run_id,
-                    "workflow_stage": WorkflowStage::Implementation,
+                    "workflow_stage": workflow_stage,
                 }),
             },
         ));
@@ -311,12 +323,19 @@ pub(super) async fn exec_prompt(
         )
     })?;
     let outcome = LocalStore::apply_command(&mut conn, &cmd, now).map_err(storage_error_to_http)?;
-    if let CommandApplyOutcome::Applied { events, .. } = &outcome {
-        state.publish_events(&session.id.0, events);
-        state.notify_outbox();
-        state.notify_dsh_subscriber();
-        state.notify_scheduler();
-    }
+    let workflow_stage = match &outcome {
+        CommandApplyOutcome::Applied { run, events, .. } => {
+            state.publish_events(&session.id.0, events);
+            state.notify_outbox();
+            state.notify_dsh_subscriber();
+            state.notify_scheduler();
+            run.as_ref()
+                .map_or(WorkflowStage::Implementation, |r| r.workflow_stage)
+        }
+        CommandApplyOutcome::AlreadyExists { run, .. } => run
+            .as_ref()
+            .map_or(WorkflowStage::Implementation, |r| r.workflow_stage),
+    };
     Ok((
         StatusCode::CREATED,
         ChatDispatchResponse {
@@ -325,7 +344,7 @@ pub(super) async fn exec_prompt(
             data: json!({
                 "session_id": session.id.0,
                 "run_id": run_id.0,
-                "workflow_stage": WorkflowStage::Implementation,
+                "workflow_stage": workflow_stage,
             }),
         },
     ))

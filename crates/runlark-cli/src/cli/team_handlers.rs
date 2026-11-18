@@ -390,7 +390,11 @@ async fn handle_team_accept_invite(
 ) -> CliResult {
     let token = resolve_token_secret(
         token_input,
-        &["RUNLARK_INVITE_TOKEN", "RUNLARK_TEAM_TOKEN"],
+        &[
+            "RUNLARK_TEAM_INVITE_TOKEN",
+            "RUNLARK_INVITE_TOKEN",
+            "RUNLARK_TEAM_TOKEN",
+        ],
         true,
         "invite token",
     )?

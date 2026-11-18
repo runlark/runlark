@@ -6,6 +6,7 @@ use a2_team_mock::{
 use axum::Router;
 use axum::routing::{get, post};
 use reqwest::Client;
+use runlark_cli::AppState;
 use runlark_domain::{
     BudgetPolicy, CommandId, CostSummary, CursorSeq, DecisionKind, PolicyDigest, Project,
     ProjectId, Revision, Run, RunId, RunStatus, ServerPromotionAck, SessionId, Task, TaskId,
@@ -277,6 +278,7 @@ async fn assert_offline_chat_prompt_gate(http: &Client, daemon_url: &str, db_pat
 async fn verify_clarify_and_plan_approval(
     http: &Client,
     daemon_url: &str,
+    state: &AppState,
     mock_state: &MockTeamServerState,
 ) {
     mock_state.offline.store(true, Ordering::SeqCst);
@@ -319,6 +321,7 @@ async fn verify_clarify_and_plan_approval(
             .status(),
         200
     );
+    let mut rx = state.subscribe_events();
     assert_eq!(
         http.post(format!("{daemon_url}/api/v1/chat/dispatch"))
             .json(&json!({ "input": "/stop run_p stop from chat" }))
@@ -327,6 +330,10 @@ async fn verify_clarify_and_plan_approval(
             .unwrap()
             .status(),
         200
+    );
+    assert!(
+        rx.try_recv().is_ok(),
+        "TeamManaged exec_stop_run must publish RunCancelRequested event"
     );
 }
 
@@ -476,7 +483,7 @@ async fn clarify_plan_approve_and_draft_determinism_respect_team_gates() {
     init_drafts_db(&db_path, &repo_dir);
 
     let (mock_url, mock_state, mock_handle) = spawn_mock_drafts_server().await;
-    let (daemon_url, _state, _shutdown, daemon_handle) = spawn_daemon(&db_path).await;
+    let (daemon_url, state, _shutdown, daemon_handle) = spawn_daemon(&db_path).await;
     let http = Client::new();
 
     assert_eq!(
@@ -492,7 +499,7 @@ async fn clarify_plan_approve_and_draft_determinism_respect_team_gates() {
     );
 
     verify_session_commands_team_gate(&http, &daemon_url, &mock_state, &db_path).await;
-    verify_clarify_and_plan_approval(&http, &daemon_url, &mock_state).await;
+    verify_clarify_and_plan_approval(&http, &daemon_url, &state, &mock_state).await;
     verify_drafts_edge_cases(&http, &daemon_url, &mock_state).await;
     verify_team_start_idempotency_and_online_prompt(&http, &daemon_url).await;
 

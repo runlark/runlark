@@ -294,6 +294,15 @@ fn dsh_endpoint_log_origin_strips_query_and_userinfo() {
     let ep = DshEndpoint::parse("http://user:secret@127.0.0.1:4321/?token=tok_123", None);
     assert_eq!(ep.log_origin(), "http://127.0.0.1:4321");
     assert_eq!(ep.token.as_deref(), Some("tok_123"));
+
+    let schemeless = DshEndpoint::parse("user:secret@127.0.0.1:4321/path/@org?token=x", None);
+    assert_eq!(schemeless.log_origin(), "127.0.0.1:4321/path/@org");
+
+    let path_at = DshEndpoint::parse("http://127.0.0.1:4321/api/@team", None);
+    assert_eq!(path_at.log_origin(), "http://127.0.0.1:4321/api/@team");
+
+    let pw_at = DshEndpoint::parse("http://user:p@ss@127.0.0.1:4321/api", None);
+    assert_eq!(pw_at.log_origin(), "http://127.0.0.1:4321/api");
 }
 
 #[tokio::test]

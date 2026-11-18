@@ -98,12 +98,22 @@ impl DshEndpoint {
     /// Returns a credential-free origin string safe for diagnostic logging.
     #[must_use]
     pub fn log_origin(&self) -> String {
-        if let Some((scheme, rest)) = self.origin.split_once("://")
-            && let Some((_, host_part)) = rest.split_once('@')
-        {
-            return format!("{scheme}://{host_part}");
+        let (scheme_prefix, after_scheme) = match self.origin.split_once("://") {
+            Some((scheme, rest)) => (Some(scheme), rest),
+            None => (None, self.origin.as_str()),
+        };
+        let (authority, path_suffix) = match after_scheme.find('/') {
+            Some(idx) => (&after_scheme[..idx], &after_scheme[idx..]),
+            None => (after_scheme, ""),
+        };
+        let clean_authority = match authority.rsplit_once('@') {
+            Some((_, host)) => host,
+            None => authority,
+        };
+        match scheme_prefix {
+            Some(scheme) => format!("{scheme}://{clean_authority}{path_suffix}"),
+            None => format!("{clean_authority}{path_suffix}"),
         }
-        self.origin.clone()
     }
 }
 

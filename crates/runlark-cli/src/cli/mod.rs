@@ -270,7 +270,7 @@ pub enum TeamAction {
     AcceptInvite {
         #[arg(long)]
         server: String,
-        /// Invite token (prefer `RUNLARK_INVITE_TOKEN`, `--token-file`, or `--token-stdin` to avoid argv exposure)
+        /// Invite token (prefer `RUNLARK_TEAM_INVITE_TOKEN`, `RUNLARK_INVITE_TOKEN`, `--token-file`, or `--token-stdin` to avoid argv exposure)
         #[arg(long, conflicts_with_all = ["token_file", "token_stdin"])]
         token: Option<String>,
         /// Read invite token from file path (or `-` for stdin)

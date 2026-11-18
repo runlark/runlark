@@ -5,8 +5,8 @@ use runlark_cli::{AppState, build_router};
 use runlark_domain::{
     BudgetPolicy, CommentId, CostSummary, CursorSeq, PolicyDigest, Revision, Run, RunOwnership,
     RunStatus, SessionId, TaskComment, TaskId, TaskStage, TeamCommand, TeamRunEntry, Timestamp,
-    UserId, WorkflowStage, Workspace, WorkspaceEventEnvelope, WorkspaceId, WorkspaceMember,
-    WorkspaceRole, WorkspaceSnapshot, WorkspaceSyncEvent,
+    UserId, Workspace, WorkspaceEventEnvelope, WorkspaceId, WorkspaceMember, WorkspaceRole,
+    WorkspaceSnapshot, WorkspaceSyncEvent,
 };
 use runlark_local::{initialize_schema, open_sqlite, sha256_hex};
 use serde::Deserialize;
@@ -402,7 +402,7 @@ fn handle_create_team_run_cmd(
         updated_at: Timestamp(4_000),
         task_id: Some(c.task_id.clone()),
         project_id: Some(c.project_id.clone()),
-        workflow_stage: WorkflowStage::Implementation,
+        workflow_stage: updated_task.workflow_stage,
         task_kind: updated_task.kind,
         workflow_digest: None,
         base_sha: None,

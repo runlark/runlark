@@ -7,12 +7,20 @@ use crate::routes::team_gate;
 use crate::state::AppState;
 use axum::http::StatusCode;
 use runlark_domain::{
-    AnswerQuestionCommand, CancelTeamRunCommand, CommandId, QuestionId, ResumeSessionCommand,
-    RunId, SessionCommand, StopRunCommand, TaskId, TeamCommand, Timestamp,
+    AnswerQuestionCommand, CommandId, QuestionId, ResumeSessionCommand, RunId, SessionCommand,
+    StopRunCommand, TaskId, Timestamp,
 };
 use runlark_local::{CommandApplyOutcome, LocalStore, QuestionStore, SessionStore, TaskStore};
 use serde_json::{Value, json};
 use uuid::Uuid;
+
+fn resolve_command_id(command_id: Option<String>, prefix: &str) -> CommandId {
+    CommandId::from(
+        command_id
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| format!("{prefix}_{}", Uuid::new_v4().simple())),
+    )
+}
 
 pub(super) async fn exec_stop_run(
     state: &AppState,
@@ -43,23 +51,10 @@ pub(super) async fn exec_stop_run(
     };
 
     let now = Timestamp(AppState::current_timestamp_ms());
-    let cmd_id = CommandId::from(
-        command_id
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| format!("cmd_stop_{}", Uuid::new_v4().simple())),
-    );
+    let cmd_id = resolve_command_id(command_id, "cmd_stop");
     if let Some(ctx) = team_ctx {
-        let cancel_reason = reason
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "Cancelled by operator".to_string());
-        let team_cmd = TeamCommand::CancelRun(CancelTeamRunCommand {
-            command_id: cmd_id,
-            run_id: run_id.clone(),
-            reason: cancel_reason,
-            expected_revision: run.revision,
-            created_at: now,
-        });
-        team_gate::submit_team_command_checked(state, &ctx, &team_cmd).await?;
+        team_gate::submit_team_cancel_run(state, &ctx, &run, &cmd_id, reason, run.revision, now)
+            .await?;
     } else {
         let mut conn = state.get_connection().map_err(|e| {
             api_error(
@@ -151,9 +146,7 @@ pub(super) async fn exec_resume_run(
     let now = Timestamp(AppState::current_timestamp_ms());
     let expected_revision = load_session_revision(state, &run.session_id)?;
     let cmd = SessionCommand::ResumeSession(ResumeSessionCommand {
-        command_id: CommandId::from(
-            command_id.unwrap_or_else(|| format!("cmd_res_{}", Uuid::new_v4().simple())),
-        ),
+        command_id: resolve_command_id(command_id, "cmd_res"),
         session_id: run.session_id.clone(),
         run_id: run_id.clone(),
         after_seq: None,
@@ -270,9 +263,7 @@ pub(super) async fn exec_answer_question(
 
     let now = Timestamp(AppState::current_timestamp_ms());
     let cmd = AnswerQuestionCommand {
-        command_id: CommandId::from(
-            command_id.unwrap_or_else(|| format!("cmd_ans_{}", Uuid::new_v4().simple())),
-        ),
+        command_id: resolve_command_id(command_id, "cmd_ans"),
         session_id: session.id.clone(),
         run_id: question.run_id.clone(),
         question_id: question_id.clone(),
@@ -376,9 +367,7 @@ pub(super) async fn exec_create_pr(
     }
 
     let req = CreatePrRequest {
-        command_id: CommandId::from(
-            command_id.unwrap_or_else(|| format!("cmd_pr_{}", Uuid::new_v4().simple())),
-        ),
+        command_id: resolve_command_id(command_id, "cmd_pr"),
         run_id: resolved_run_id,
         title,
         body: None,

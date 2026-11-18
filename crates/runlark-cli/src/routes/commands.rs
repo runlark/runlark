@@ -4,9 +4,7 @@ use crate::state::AppState;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use runlark_domain::{
-    CancelTeamRunCommand, CreateTeamRunCommand, RunId, SessionCommand, TeamCommand, Timestamp,
-};
+use runlark_domain::{CreateTeamRunCommand, RunId, SessionCommand, TeamCommand, Timestamp};
 use runlark_local::{CommandApplyOutcome, LocalStore, SessionStore};
 use serde::Serialize;
 
@@ -86,20 +84,16 @@ pub(crate) async fn submit_team_session_command(
             } else {
                 stop_cmd.expected_revision
             };
-            let reason = stop_cmd
-                .reason
-                .clone()
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| "Cancelled by operator".to_string());
-            let team_cmd = TeamCommand::CancelRun(CancelTeamRunCommand {
-                command_id: stop_cmd.command_id.clone(),
-                run_id: target_run.id.clone(),
-                reason,
+            let res = team_gate::submit_team_cancel_run(
+                state,
+                &team.context,
+                &target_run,
+                &stop_cmd.command_id,
+                stop_cmd.reason.clone(),
                 expected_revision,
-                created_at: now,
-            });
-            let res =
-                team_gate::submit_team_command_checked(state, &team.context, &team_cmd).await?;
+                now,
+            )
+            .await?;
             Ok(Some(build_team_command_response(
                 state,
                 &stop_cmd.command_id,
