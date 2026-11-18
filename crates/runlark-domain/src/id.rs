@@ -78,6 +78,30 @@ define_string_id!(
     /// SHA-256 digest or version identifier binding a project's budget/review policy.
     PolicyDigest
 );
+define_string_id!(
+    /// Unique identifier for a shared collaboration workspace.
+    WorkspaceId
+);
+define_string_id!(
+    /// Unique identifier for an authenticated workspace participant.
+    UserId
+);
+define_string_id!(
+    /// Unique identifier for a registered execution runner daemon.
+    RunnerId
+);
+define_string_id!(
+    /// Unique identifier for a workspace membership invitation.
+    InviteId
+);
+define_string_id!(
+    /// Unique identifier for an immutable append-only task comment.
+    CommentId
+);
+define_string_id!(
+    /// Unique identifier for a client-side offline draft.
+    DraftId
+);
 
 /// Validated 64-character lowercase hexadecimal SHA-256 digest for CAS artifacts.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
@@ -176,6 +200,30 @@ impl fmt::Display for EventSeq {
 pub struct Timestamp(pub u64);
 
 impl fmt::Display for Timestamp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Monotonically increasing workspace synchronization cursor sequence.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default,
+)]
+pub struct CursorSeq(pub u64);
+
+impl fmt::Display for CursorSeq {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Monotonically increasing fencing epoch for exclusive runner ownership on a run.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default,
+)]
+pub struct LeaseEpoch(pub u64);
+
+impl fmt::Display for LeaseEpoch {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }

@@ -1,4 +1,4 @@
-use crate::id::{Revision, RunId, SessionId};
+use crate::id::{LeaseEpoch, Revision, RunId, RunnerId, SessionId};
 use crate::task::{TaskStage, WorkflowStage};
 use thiserror::Error;
 
@@ -84,6 +84,39 @@ pub enum TransitionError {
 
     #[error("Invalid run state: {0}")]
     InvalidRunState(String),
+
+    #[error("Workspace permission denied for action '{action}' with role '{role}'")]
+    WorkspacePermissionDenied { action: String, role: String },
+
+    #[error(
+        "Runner fencing mismatch on run {run_id}: expected ({expected_runner:?}, epoch {expected_epoch}), got ({actual_runner}, epoch {actual_epoch})"
+    )]
+    RunnerFencingMismatch {
+        run_id: RunId,
+        expected_runner: Option<RunnerId>,
+        expected_epoch: LeaseEpoch,
+        actual_runner: RunnerId,
+        actual_epoch: LeaseEpoch,
+    },
+
+    #[error(
+        "Active run {run_id} is owned by runner {owner_runner_id}; automatic takeover is forbidden"
+    )]
+    ActiveRunPreventsTakeover {
+        run_id: RunId,
+        owner_runner_id: RunnerId,
+    },
+
+    #[error("Runner {runner_id} is not online (status: {status})")]
+    RunnerNotOnline { runner_id: RunnerId, status: String },
+
+    #[error(
+        "Cannot promote solo project to team while {active_runs} active or queued run(s) exist"
+    )]
+    SoloToTeamBlockedByActiveRuns { active_runs: usize },
+
+    #[error("Invalid invitation state: {0}")]
+    InvalidInvitationState(String),
 }
 
 /// Generic domain-level error.
