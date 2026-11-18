@@ -61,9 +61,9 @@ impl TeamAuthStore {
                 "user_id = excluded.user_id, ",
                 "display_name = excluded.display_name, ",
                 "bearer_token = excluded.bearer_token, ",
-                "default_workspace_id = COALESCE(excluded.default_workspace_id, team_auth_sessions.default_workspace_id), ",
-                "runner_id = COALESCE(excluded.runner_id, team_auth_sessions.runner_id), ",
-                "runner_name = COALESCE(excluded.runner_name, team_auth_sessions.runner_name), ",
+                "default_workspace_id = CASE WHEN team_auth_sessions.user_id = excluded.user_id THEN COALESCE(excluded.default_workspace_id, team_auth_sessions.default_workspace_id) ELSE excluded.default_workspace_id END, ",
+                "runner_id = CASE WHEN team_auth_sessions.user_id = excluded.user_id THEN COALESCE(excluded.runner_id, team_auth_sessions.runner_id) ELSE excluded.runner_id END, ",
+                "runner_name = CASE WHEN team_auth_sessions.user_id = excluded.user_id THEN COALESCE(excluded.runner_name, team_auth_sessions.runner_name) ELSE excluded.runner_name END, ",
                 "updated_at = excluded.updated_at"
             ),
             params![
@@ -76,6 +76,18 @@ impl TeamAuthStore {
                 session.runner_name,
                 to_sql_i64(session.updated_at.0)?,
             ],
+        )?;
+        Ok(())
+    }
+
+    /// Deletes the auth session for `server_url`, if present.
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] on SQL failure.
+    pub fn delete_by_server(conn: &Connection, server_url: &str) -> Result<(), StorageError> {
+        conn.execute(
+            "DELETE FROM team_auth_sessions WHERE server_url = ?1",
+            params![server_url.trim_end_matches('/')],
         )?;
         Ok(())
     }

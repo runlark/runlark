@@ -114,18 +114,27 @@ pub async fn team_login(
         .workspace_id
         .filter(|s| !s.trim().is_empty())
         .map(WorkspaceId::from);
+    let worker = TeamSyncWorker::new(state.clone());
+    let bearer_trimmed = req.bearer_token.trim().to_string();
+    if let Some(ref wid) = ws_id {
+        let _ = worker
+            .fetch_snapshot(&clean_url, &bearer_trimmed, wid)
+            .await
+            .map_err(team_server_error_to_http)?;
+    }
+
     let now = Timestamp(AppState::current_timestamp_ms());
     let session = TeamAuthSession {
         server_url: clean_url.clone(),
         user_id: UserId::from(whoami.user_id.clone()),
         display_name: whoami.display_name.clone(),
-        bearer_token: req.bearer_token.trim().to_string(),
+        bearer_token: bearer_trimmed,
         default_workspace_id: ws_id.clone(),
         runner_id: None,
         runner_name: None,
         updated_at: now,
     };
-    {
+    let prev_session = {
         let conn = state.get_connection().map_err(|e| {
             api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -133,15 +142,28 @@ pub async fn team_login(
                 e.to_string(),
             )
         })?;
+        let prev =
+            TeamAuthStore::get_by_server(&conn, &clean_url).map_err(storage_error_to_http)?;
         TeamAuthStore::save_session(&conn, &session).map_err(storage_error_to_http)?;
-    }
+        prev
+    };
 
-    if let Some(ref wid) = ws_id {
-        let worker = TeamSyncWorker::new(state.clone());
-        worker
+    if let Some(ref wid) = ws_id
+        && let Err(err) = worker
             .sync_workspace(&clean_url, &session.bearer_token, wid)
             .await
-            .map_err(team_server_error_to_http)?;
+    {
+        if let Ok(conn) = state.get_connection() {
+            match prev_session {
+                Some(ref prev) => {
+                    let _ = TeamAuthStore::save_session(&conn, prev);
+                }
+                None => {
+                    let _ = TeamAuthStore::delete_by_server(&conn, &clean_url);
+                }
+            }
+        }
+        return Err(team_server_error_to_http(err));
     }
 
     Ok(Json(TeamLoginResponse {

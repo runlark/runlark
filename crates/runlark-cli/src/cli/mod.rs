@@ -115,8 +115,15 @@ pub enum ProjectAction {
         server: String,
         #[arg(long)]
         workspace: String,
-        #[arg(long)]
+        /// Bearer token (prefer `RUNLARK_TEAM_TOKEN`, `--token-file`, or `--token-stdin` to avoid argv exposure)
+        #[arg(long, conflicts_with_all = ["token_file", "token_stdin"])]
         token: Option<String>,
+        /// Read bearer token from file path (or `-` for stdin)
+        #[arg(long, value_name = "PATH", conflicts_with = "token_stdin")]
+        token_file: Option<PathBuf>,
+        /// Read bearer token from stdin
+        #[arg(long)]
+        token_stdin: bool,
     },
 }
 
@@ -231,8 +238,15 @@ pub enum TeamAction {
     Login {
         #[arg(long)]
         server: String,
+        /// Bearer token (prefer `RUNLARK_TEAM_TOKEN`, `--token-file`, or `--token-stdin` to avoid argv exposure)
+        #[arg(long, conflicts_with_all = ["token_file", "token_stdin"])]
+        token: Option<String>,
+        /// Read bearer token from file path (or `-` for stdin)
+        #[arg(long, value_name = "PATH", conflicts_with = "token_stdin")]
+        token_file: Option<PathBuf>,
+        /// Read bearer token from stdin
         #[arg(long)]
-        token: String,
+        token_stdin: bool,
         #[arg(long)]
         workspace: Option<String>,
     },
@@ -256,8 +270,15 @@ pub enum TeamAction {
     AcceptInvite {
         #[arg(long)]
         server: String,
+        /// Invite token (prefer `RUNLARK_INVITE_TOKEN`, `--token-file`, or `--token-stdin` to avoid argv exposure)
+        #[arg(long, conflicts_with_all = ["token_file", "token_stdin"])]
+        token: Option<String>,
+        /// Read invite token from file path (or `-` for stdin)
+        #[arg(long, value_name = "PATH", conflicts_with = "token_stdin")]
+        token_file: Option<PathBuf>,
+        /// Read invite token from stdin
         #[arg(long)]
-        token: String,
+        token_stdin: bool,
         #[arg(long)]
         name: String,
         #[arg(long)]

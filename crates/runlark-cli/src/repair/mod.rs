@@ -182,6 +182,10 @@ impl WorkflowPipeline {
             Ok::<_, PipelineError>((outcome.new_run, stored, lease, task_before))
         })?;
         drop(conn);
+        state.publish_events(&new_run.session_id.0, &stored);
+        if new_run.status == RunStatus::WaitingForApproval {
+            state.notify_scheduler();
+        }
         if let Some(ref lease) = lease {
             team_report::report_stage_advance(
                 state,
@@ -192,10 +196,6 @@ impl WorkflowPipeline {
                 now,
             )
             .await?;
-        }
-        state.publish_events(&new_run.session_id.0, &stored);
-        if new_run.status == RunStatus::WaitingForApproval {
-            state.notify_scheduler();
         }
         Ok(new_run)
     }
@@ -277,6 +277,15 @@ impl WorkflowPipeline {
         })?;
         drop(conn);
 
+        for (session_id, stored) in buffered_events {
+            state.publish_events(&session_id, std::slice::from_ref(&stored));
+        }
+        match &outcome {
+            VerifyPipelineOutcome::PassedForAcceptance { .. }
+            | VerifyPipelineOutcome::BudgetHalted { .. } => state.notify_scheduler(),
+            VerifyPipelineOutcome::RepairScheduled { .. } => state.notify_outbox(),
+        }
+
         if let Some(ref lease) = team_lease {
             team_report::report_verification_outcome(
                 state,
@@ -292,15 +301,6 @@ impl WorkflowPipeline {
                 },
             )
             .await?;
-        }
-
-        for (session_id, stored) in buffered_events {
-            state.publish_events(&session_id, std::slice::from_ref(&stored));
-        }
-        match &outcome {
-            VerifyPipelineOutcome::PassedForAcceptance { .. }
-            | VerifyPipelineOutcome::BudgetHalted { .. } => state.notify_scheduler(),
-            VerifyPipelineOutcome::RepairScheduled { .. } => state.notify_outbox(),
         }
         Ok(outcome)
     }

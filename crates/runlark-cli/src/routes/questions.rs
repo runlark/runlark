@@ -162,23 +162,40 @@ pub async fn answer_question(
     let now = AppState::current_timestamp_ms();
     let cmd = build_answer_question_cmd(&state, &question_id, req, Timestamp(now))?;
 
-    if let Some(team) = team_gate::resolve_session_command_team_context(
+    let team_ctx = team_gate::resolve_session_command_team_context(
         &state,
         &SessionCommand::AnswerQuestion(cmd.clone()),
-    )? {
-        team_gate::verify_server_reachable_and_synced(&state, &team.context).await?;
+    )?
+    .map(|t| t.context);
+    if let Some(ref ctx) = team_ctx {
+        team_gate::verify_server_reachable_and_synced(&state, ctx).await?;
     }
 
-    let mut conn = state.get_connection().map_err(|e| {
-        api_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "storage_error",
-            e.to_string(),
-        )
-    })?;
     let command_id = cmd.command_id.clone();
-    let outcome = LocalStore::answer_question(&mut conn, cmd, Timestamp(now))
-        .map_err(storage_error_to_http)?;
+    let run_id = cmd.run_id.clone();
+    let outcome = {
+        let mut conn = state.get_connection().map_err(|e| {
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                e.to_string(),
+            )
+        })?;
+        LocalStore::answer_question(&mut conn, cmd, Timestamp(now))
+            .map_err(storage_error_to_http)?
+    };
+    if matches!(outcome, CommandApplyOutcome::Applied { .. })
+        && let Some(ref ctx) = team_ctx
+    {
+        team_gate::sync_team_run_resumed_if_leased(
+            &state,
+            ctx,
+            &run_id,
+            "question_answered",
+            &serde_json::json!({ "question_id": question_id.0 }).to_string(),
+        )
+        .await;
+    }
     Ok(format_answer_response(
         &state,
         &command_id,

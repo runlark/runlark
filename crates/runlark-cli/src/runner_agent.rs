@@ -151,18 +151,32 @@ impl RunnerAgentWorker {
                     summary.fencing_conflicts += conflicts;
                 }
                 Err(TeamServerError::Offline(_)) => {}
-                Err(err) => return Err(err),
+                Err(err) => {
+                    tracing::warn!("Runner flush failed for {wid}/{rid}: {err}");
+                }
             }
 
-            let assigned = self.list_assigned_executable_runs(wid, rid)?;
-            summary.assigned_runs_prepared += prepare_run_worktrees(
-                &self.state.db_path,
-                &assigned,
-                AppState::current_timestamp_ms(),
-            )
-            .await?;
+            if let Err(err) = self.prepare_session_worktrees(wid, rid, &mut summary).await {
+                tracing::warn!("Runner worktree prep failed for {wid}/{rid}: {err}");
+            }
         }
         Ok(summary)
+    }
+
+    async fn prepare_session_worktrees(
+        &self,
+        wid: &WorkspaceId,
+        rid: &RunnerId,
+        summary: &mut RunnerTickSummary,
+    ) -> Result<(), TeamServerError> {
+        let assigned = self.list_assigned_executable_runs(wid, rid)?;
+        summary.assigned_runs_prepared += prepare_run_worktrees(
+            &self.state.db_path,
+            &assigned,
+            AppState::current_timestamp_ms(),
+        )
+        .await?;
+        Ok(())
     }
 
     /// Registers this daemon as a runner in `workspace_id` and persists its `(runner_id, name)`.

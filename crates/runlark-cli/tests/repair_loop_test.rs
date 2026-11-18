@@ -1,10 +1,16 @@
 use reqwest::Client;
 use runlark_cli::{
-    AppState, VerificationService, VerifyPipelineOptions, VerifyPipelineOutcome, WorkflowPipeline,
-    build_router,
+    AppState, PipelineError, VerificationService, VerifyPipelineOptions, VerifyPipelineOutcome,
+    WorkflowPipeline, build_router,
 };
-use runlark_domain::{BudgetBlockReason, RunId, RunStatus, Timestamp, WorkflowStage};
-use runlark_local::{ArtifactCasStore, EventStore, initialize_schema, open_sqlite};
+use runlark_domain::{
+    BudgetBlockReason, CursorSeq, RunId, RunStatus, RunnerId, ServerPromotionAck, Timestamp,
+    UserId, WorkflowStage, WorkspaceId,
+};
+use runlark_local::{
+    ArtifactCasStore, EventStore, SyncStore, TeamAuthSession, TeamAuthStore, initialize_schema,
+    open_sqlite,
+};
 use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -332,5 +338,166 @@ async fn unknown_cost_attempt_blocks_repair_and_emits_explicit_events() {
     assert!(events.iter().any(|e| e.event_type == "BudgetExceeded"));
     assert!(events.iter().any(|e| e.event_type == "UnknownCostBlocked"));
 
+    server.abort();
+}
+
+fn seed_team_leased_run(db_path: &Path, reject_url: &str, wt_path: &Path) {
+    let mut conn = open_sqlite(db_path).expect("open");
+    let wid = WorkspaceId::from("ws_pub");
+    SyncStore::promote_project_to_team_atomic(
+        &mut conn,
+        &runlark_domain::ProjectId::from("proj_rep"),
+        reject_url,
+        &ServerPromotionAck {
+            workspace_id: wid.clone(),
+            project_id: runlark_domain::ProjectId::from("proj_rep"),
+            ownership_epoch: 1,
+            initial_cursor: CursorSeq(0),
+            acknowledged_at: Timestamp(1_000),
+        },
+        Timestamp(1_000),
+    )
+    .expect("promote");
+    TeamAuthStore::save_session(
+        &conn,
+        &TeamAuthSession {
+            server_url: reject_url.to_string(),
+            user_id: UserId::from("usr_pub"),
+            display_name: "Pub".to_string(),
+            bearer_token: "tok".to_string(),
+            default_workspace_id: Some(wid),
+            runner_id: Some(RunnerId::from("rnr_pub")),
+            runner_name: Some("Pub Runner".to_string()),
+            updated_at: Timestamp(1_000),
+        },
+    )
+    .expect("save auth");
+    runlark_local::SessionStore::create_session(
+        &conn,
+        &runlark_domain::Session {
+            id: runlark_domain::SessionId::from("sess_pub_1"),
+            task_id: runlark_domain::TaskId::from("task_pub"),
+            cwd: wt_path.to_string_lossy().to_string(),
+            status: runlark_domain::SessionStatus::Active,
+            current_revision: runlark_domain::Revision(1),
+            active_run_id: Some(RunId::from("run_pub_1")),
+            created_at: Timestamp(1_000),
+            updated_at: Timestamp(1_000),
+        },
+    )
+    .expect("session");
+    runlark_local::SessionStore::save_run(
+        &conn,
+        &runlark_domain::Run {
+            id: RunId::from("run_pub_1"),
+            session_id: runlark_domain::SessionId::from("sess_pub_1"),
+            status: RunStatus::Running,
+            worktree_path: wt_path.to_string_lossy().to_string(),
+            revision: runlark_domain::Revision(1),
+            created_at: Timestamp(1_000),
+            updated_at: Timestamp(1_000),
+            task_id: Some(runlark_domain::TaskId::from("task_pub")),
+            project_id: Some(runlark_domain::ProjectId::from("proj_rep")),
+            workflow_stage: WorkflowStage::Clarification,
+            task_kind: runlark_domain::TaskKind::Standard,
+            workflow_digest: None,
+            base_sha: None,
+            head_sha: None,
+            plan_version: 1,
+            policy_digest: Some(runlark_domain::PolicyDigest::from("pol_pub")),
+            budget_policy: runlark_domain::BudgetPolicy::default(),
+            cost_summary: runlark_domain::CostSummary::default(),
+            repair_attempts: 0,
+            pr_url: None,
+        },
+    )
+    .expect("run");
+    conn.execute(
+        "INSERT INTO run_ownership (run_id, assigned_runner_id, lease_epoch, runner_unreachable, updated_at) VALUES (?1, ?2, 1, 0, 1000)",
+        ["run_pub_1", "rnr_pub"],
+    )
+    .expect("upsert ownership");
+}
+
+#[tokio::test]
+async fn committed_stage_and_verify_publish_events_and_notify_even_if_team_report_fails() {
+    let temp = TempDir::new().expect("temp dir");
+    let (state, client, base, db_path, _digest, server) = setup_repair_harness(&temp).await;
+
+    let reject_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let reject_addr = reject_listener.local_addr().expect("addr");
+    let reject_app = axum::Router::new().fallback(|| async {
+        (
+            axum::http::StatusCode::CONFLICT,
+            axum::Json(json!({ "error": "runner_fencing_mismatch", "message": "stale" })),
+        )
+    });
+    let reject_server = tokio::spawn(async move {
+        let _ = axum::serve(reject_listener, reject_app).await;
+    });
+    let reject_url = format!("http://{reject_addr}");
+
+    let wt_path = temp.path().join("wt_pub");
+    fs::create_dir_all(&wt_path).expect("mkdir wt");
+    init_git_repo(&wt_path);
+    fs::write(wt_path.join("lib.rs"), "pub fn v() -> u32 { 3 }\n").expect("edit");
+
+    client
+        .post(format!("{base}/api/v1/tasks"))
+        .json(&json!({ "task_id": "task_pub", "project_id": "proj_rep", "title": "Publish on error", "kind": "standard" }))
+        .send()
+        .await
+        .expect("t");
+    seed_team_leased_run(&db_path, &reject_url, &wt_path);
+
+    let mut rx = state.subscribe_events();
+    let adv_err = WorkflowPipeline::advance_stage_with_task(
+        &state,
+        &RunId::from("run_pub_1"),
+        WorkflowStage::Plan,
+        Timestamp(2_000),
+    )
+    .await
+    .expect_err("team report conflict must return Err");
+    assert!(matches!(adv_err, PipelineError::TeamFencing(_)));
+    let adv_ev = rx
+        .try_recv()
+        .expect("advance_stage event must be published");
+    assert_eq!(adv_ev.session_id, "sess_pub_1");
+
+    // Advance directly to Implementation so verify_and_advance transitions to HumanAcceptance.
+    let _ = WorkflowPipeline::advance_stage_with_task(
+        &state,
+        &RunId::from("run_pub_1"),
+        WorkflowStage::Implementation,
+        Timestamp(3_000),
+    )
+    .await;
+    while rx.try_recv().is_ok() {}
+
+    let sched_fut = state.scheduler_notify.notified();
+    let ver_err = WorkflowPipeline::verify_and_advance(
+        &state,
+        &RunId::from("run_pub_1"),
+        VerifyPipelineOptions {
+            check_command: Some("true".to_string()),
+            ..VerifyPipelineOptions::default()
+        },
+        Timestamp(4_000),
+    )
+    .await
+    .expect_err("team report conflict must return Err");
+    assert!(matches!(ver_err, PipelineError::TeamFencing(_)));
+    assert!(
+        rx.try_recv().is_ok(),
+        "verify_and_advance events must be published"
+    );
+    tokio::time::timeout(std::time::Duration::from_millis(50), sched_fut)
+        .await
+        .expect("scheduler must be notified despite team_report failure");
+
+    reject_server.abort();
     server.abort();
 }

@@ -229,7 +229,10 @@ pub async fn run_daemon_with_dsh(
         .map(|url| DshEndpoint::parse(url, dsh_token.clone()));
     let effector: Arc<dyn OutboxEffector> = match &resolved_dsh {
         Some(endpoint) => {
-            tracing::info!("Outbox configured with DSH bridge URL: {}", endpoint.origin);
+            tracing::info!(
+                "Outbox configured with DSH bridge URL: {}",
+                endpoint.log_origin()
+            );
             Arc::new(HttpDshEffector::with_token(
                 &endpoint.origin,
                 endpoint.token.clone(),
@@ -243,14 +246,7 @@ pub async fn run_daemon_with_dsh(
     tracing::info!("Runlark daemon listening on http://{}", addr);
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let workers = spawn_daemon_workers(
-        &state,
-        db_path,
-        effector,
-        dsh_url.as_deref(),
-        dsh_token,
-        shutdown_rx,
-    );
+    let workers = spawn_daemon_workers(&state, db_path, effector, resolved_dsh, shutdown_rx);
 
     let app = build_router(state.clone());
     let shutdown_state = state.clone();
@@ -301,8 +297,7 @@ fn spawn_daemon_workers(
     state: &AppState,
     db_path: PathBuf,
     effector: Arc<dyn OutboxEffector>,
-    dsh_url: Option<&str>,
-    dsh_token: Option<String>,
+    resolved_dsh: Option<DshEndpoint>,
     shutdown_rx: watch::Receiver<bool>,
 ) -> DaemonWorkers {
     let dispatcher = Arc::new(OutboxDispatcher::new(
@@ -324,9 +319,12 @@ fn spawn_daemon_workers(
         Arc::new(RunnerAgentWorker::new(state.clone()))
             .run_loop(state.runner_notify.clone(), shutdown_rx.clone()),
     );
-    let dsh = dsh_url.map(str::trim).filter(|s| !s.is_empty()).map(|url| {
-        tracing::info!("Subscribing to DSH session/follow stream at {}", url);
-        let subscriber = DshSubscriber::new(state.clone(), url, dsh_token);
+    let dsh = resolved_dsh.map(|endpoint| {
+        tracing::info!(
+            "Subscribing to DSH session/follow stream at {}",
+            endpoint.log_origin()
+        );
+        let subscriber = DshSubscriber::from_endpoint(state.clone(), endpoint);
         tokio::spawn(subscriber.run_loop(state.dsh_notify.clone(), shutdown_rx))
     });
     DaemonWorkers {

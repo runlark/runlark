@@ -3,12 +3,13 @@ pub use crate::routes::team_decisions::{
     TeamAcceptParams, TeamRejectParams, execute_team_accept, execute_team_approve_plan,
     execute_team_reject, sync_run_evidence_to_server, validate_team_plan_approval_eligible,
 };
+use crate::runner_agent::{RunnerAgentWorker, RunnerStateInput};
 use crate::state::AppState;
 use crate::team_sync::{TeamCommandSubmissionResult, TeamSyncWorker};
 use axum::http::StatusCode;
 use runlark_domain::{
-    ProjectId, ProjectOwnershipMode, Run, RunnerId, SessionCommand, Task, TaskId, TeamCommand,
-    WorkspaceId,
+    ProjectId, ProjectOwnershipMode, Run, RunId, RunStatus, RunnerId, SessionCommand, Task, TaskId,
+    TeamCommand, WorkspaceId,
 };
 use runlark_local::{SessionStore, SyncStore, TaskStore, TeamAuthStore};
 
@@ -214,4 +215,57 @@ pub async fn verify_server_reachable_and_synced(
         .await
         .map_err(team_server_error_to_http)?;
     Ok(())
+}
+
+/// Reports (or offline-buffers) `RunStatus::Running` to `runlark-server` when a `TeamManaged`
+/// session resume or question answer transitions a run that this daemon actively leases.
+///
+/// Local DSH session commands (`ResumeSession`, `AnswerQuestion`) do not have separate
+/// [`TeamCommand`] variants because the assigned runner owns local DSH host execution and
+/// propagates resulting run-state transitions back to the server via fenced runner reports.
+pub async fn sync_team_run_resumed_if_leased(
+    state: &AppState,
+    ctx: &TeamProjectContext,
+    run_id: &RunId,
+    event_type: &str,
+    payload_json: &str,
+) {
+    let Some(ref runner_id) = ctx.runner_id else {
+        return;
+    };
+    let ownership = {
+        let Ok(conn) = state.get_connection() else {
+            return;
+        };
+        SyncStore::get_run_ownership(&conn, run_id)
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    };
+    if ownership.runner_unreachable
+        || ownership.lease_epoch.0 == 0
+        || ownership.assigned_runner_id.as_ref() != Some(runner_id)
+    {
+        return;
+    }
+    if let Err(err) = RunnerAgentWorker::new(state.clone())
+        .report_or_buffer_run_state(RunnerStateInput {
+            workspace_id: &ctx.workspace_id,
+            run_id,
+            runner_id,
+            lease_epoch: ownership.lease_epoch,
+            status: Some(RunStatus::Running),
+            workflow_stage: None,
+            head_sha: None,
+            base_sha: None,
+            event_type,
+            payload_json,
+        })
+        .await
+    {
+        tracing::warn!(
+            run_id = %run_id,
+            "Failed to report resumed team run state after local DSH command: {err}"
+        );
+    }
 }

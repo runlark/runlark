@@ -1,6 +1,6 @@
 use crate::cli::client::{DaemonHttpClient, print_output};
 use crate::cli::run_chat_handlers::{handle_task_board, handle_task_pr};
-use crate::cli::team_handlers::{handle_project_promote_team, handle_task_comment};
+use crate::cli::team_handlers::{TokenInput, handle_project_promote_team, handle_task_comment};
 use crate::cli::{ProjectAction, TaskAction};
 use serde_json::{Value, json};
 
@@ -76,9 +76,22 @@ pub async fn handle_project(
             server,
             workspace,
             token,
+            token_file,
+            token_stdin,
         } => {
-            handle_project_promote_team(client, &project_id, server, workspace, token, json_mode)
-                .await
+            handle_project_promote_team(
+                client,
+                &project_id,
+                server,
+                workspace,
+                TokenInput {
+                    token,
+                    token_file,
+                    token_stdin,
+                },
+                json_mode,
+            )
+            .await
         }
     }
 }

@@ -38,12 +38,30 @@ pub async fn submit_command(
     Json(command): Json<SessionCommand>,
 ) -> Result<(StatusCode, Json<SubmitCommandResponse>), ApiError> {
     let now = Timestamp(AppState::current_timestamp_ms());
-    if let Some(team) = team_gate::resolve_session_command_team_context(&state, &command)?
+    let team_ctx = team_gate::resolve_session_command_team_context(&state, &command)?;
+    if let Some(team) = team_ctx.clone()
         && let Some(resp) = submit_team_session_command(&state, &command, team, now).await?
     {
         return Ok(resp);
     }
-    apply_local_session_command(&state, &command, now)
+    let resp = apply_local_session_command(&state, &command, now)?;
+    if resp.0 == StatusCode::CREATED
+        && let Some(team) = team_ctx
+        && matches!(
+            command,
+            SessionCommand::ResumeSession(_) | SessionCommand::AnswerQuestion(_)
+        )
+    {
+        team_gate::sync_team_run_resumed_if_leased(
+            &state,
+            &team.context,
+            command.run_id(),
+            "session_resumed",
+            &serde_json::json!({ "command_id": command.command_id().0 }).to_string(),
+        )
+        .await;
+    }
+    Ok(resp)
 }
 
 pub(crate) async fn submit_team_session_command(

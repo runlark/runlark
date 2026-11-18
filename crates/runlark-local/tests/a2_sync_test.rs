@@ -9,7 +9,7 @@ use runlark_domain::{
 };
 use runlark_local::{
     BoardProjection, BoardStore, CommentStore, ProjectStore, SessionStore, StorageError, SyncStore,
-    TaskStore, initialize_schema, open_in_memory,
+    TaskStore, TeamAuthSession, TeamAuthStore, initialize_schema, open_in_memory,
 };
 
 fn setup_db() -> runlark_local::Connection {
@@ -337,4 +337,71 @@ fn test_apply_events_batch_atomic_contiguous_and_gap_rollback() {
             .len(),
         1
     );
+}
+
+#[test]
+fn test_save_session_does_not_inherit_workspace_or_runner_across_users() {
+    let conn = setup_db();
+    TeamAuthStore::save_session(
+        &conn,
+        &TeamAuthSession {
+            server_url: "http://127.0.0.1:8080".to_string(),
+            user_id: UserId::from("usr_alice"),
+            display_name: "Alice".to_string(),
+            bearer_token: "tok_alice".to_string(),
+            default_workspace_id: Some(WorkspaceId::from("ws_alice")),
+            runner_id: Some(RunnerId::from("rnr_alice")),
+            runner_name: Some("Alice Laptop".to_string()),
+            updated_at: Timestamp(100),
+        },
+    )
+    .expect("save alice");
+
+    // Re-login by the same user preserves default workspace and runner identity.
+    TeamAuthStore::save_session(
+        &conn,
+        &TeamAuthSession {
+            server_url: "http://127.0.0.1:8080/".to_string(),
+            user_id: UserId::from("usr_alice"),
+            display_name: "Alice Updated".to_string(),
+            bearer_token: "tok_alice_2".to_string(),
+            default_workspace_id: None,
+            runner_id: None,
+            runner_name: None,
+            updated_at: Timestamp(200),
+        },
+    )
+    .expect("resave alice");
+    let alice = TeamAuthStore::get_by_server(&conn, "http://127.0.0.1:8080")
+        .expect("get alice")
+        .expect("exists");
+    assert_eq!(
+        alice.default_workspace_id,
+        Some(WorkspaceId::from("ws_alice"))
+    );
+    assert_eq!(alice.runner_id, Some(RunnerId::from("rnr_alice")));
+    assert_eq!(alice.runner_name.as_deref(), Some("Alice Laptop"));
+
+    // Logging in as a different user on the same server must NOT inherit Alice's workspace or runner.
+    TeamAuthStore::save_session(
+        &conn,
+        &TeamAuthSession {
+            server_url: "http://127.0.0.1:8080".to_string(),
+            user_id: UserId::from("usr_bob"),
+            display_name: "Bob".to_string(),
+            bearer_token: "tok_bob".to_string(),
+            default_workspace_id: None,
+            runner_id: None,
+            runner_name: None,
+            updated_at: Timestamp(300),
+        },
+    )
+    .expect("save bob");
+    let bob = TeamAuthStore::get_by_server(&conn, "http://127.0.0.1:8080")
+        .expect("get bob")
+        .expect("exists");
+    assert_eq!(bob.user_id, UserId::from("usr_bob"));
+    assert_eq!(bob.default_workspace_id, None);
+    assert_eq!(bob.runner_id, None);
+    assert_eq!(bob.runner_name, None);
 }

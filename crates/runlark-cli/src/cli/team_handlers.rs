@@ -2,6 +2,52 @@ use crate::cli::client::{DaemonHttpClient, print_output};
 use crate::cli::run_chat_handlers::CliResult;
 use crate::cli::{RunnerAction, TeamAction};
 use serde_json::json;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+
+/// Token input sources supporting env vars, files, stdin, or fallback CLI flags.
+pub struct TokenInput {
+    pub token: Option<String>,
+    pub token_file: Option<PathBuf>,
+    pub token_stdin: bool,
+}
+
+fn resolve_token_secret(
+    input: TokenInput,
+    env_vars: &[&str],
+    required: bool,
+    label: &str,
+) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+    let raw = if input.token_stdin {
+        let mut buf = String::new();
+        std::io::stdin().read_to_string(&mut buf)?;
+        Some(buf)
+    } else if let Some(path) = input.token_file {
+        if path == Path::new("-") {
+            let mut buf = String::new();
+            std::io::stdin().read_to_string(&mut buf)?;
+            Some(buf)
+        } else {
+            Some(std::fs::read_to_string(&path)?)
+        }
+    } else if let Some(tok) = input.token {
+        Some(tok)
+    } else {
+        env_vars
+            .iter()
+            .find_map(|name| std::env::var(name).ok().filter(|v| !v.trim().is_empty()))
+    };
+
+    let trimmed = raw.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    if required && trimmed.is_none() {
+        return Err(format!(
+            "{label} is required: supply --token-stdin, --token-file, {}, or --token",
+            env_vars.join(" / ")
+        )
+        .into());
+    }
+    Ok(trimmed)
+}
 
 /// Promotes a solo project to team ownership via `POST /api/v1/projects/{id}/promote-team`.
 ///
@@ -12,9 +58,10 @@ pub async fn handle_project_promote_team(
     project_id: &str,
     server: String,
     workspace: String,
-    token: Option<String>,
+    token_input: TokenInput,
     json_mode: bool,
 ) -> CliResult {
+    let token = resolve_token_secret(token_input, &["RUNLARK_TEAM_TOKEN"], false, "bearer token")?;
     let mut body = json!({
         "server_url": server,
         "workspace_id": workspace,
@@ -86,24 +133,22 @@ pub async fn handle_team(
         TeamAction::Login {
             server,
             token,
+            token_file,
+            token_stdin,
             workspace,
         } => {
-            let mut body = json!({
-                "server_url": server,
-                "bearer_token": token,
-            });
-            if let Some(wid) = workspace {
-                body["workspace_id"] = json!(wid);
-            }
-            let val = client.post_json("/api/v1/team/login", Some(&body)).await?;
-            print_output(&val, json_mode, |v| {
-                format!(
-                    "Logged in as {} ({}) @ {}",
-                    v["display_name"].as_str().unwrap_or(""),
-                    v["user_id"].as_str().unwrap_or(""),
-                    v["server_url"].as_str().unwrap_or("")
-                )
-            })
+            handle_team_login(
+                client,
+                server,
+                TokenInput {
+                    token,
+                    token_file,
+                    token_stdin,
+                },
+                workspace,
+                json_mode,
+            )
+            .await
         }
         TeamAction::Members { workspace } => {
             let val = client
@@ -134,9 +179,25 @@ pub async fn handle_team(
         TeamAction::AcceptInvite {
             server,
             token,
+            token_file,
+            token_stdin,
             name,
             user_id,
-        } => handle_team_accept_invite(client, server, token, name, user_id, json_mode).await,
+        } => {
+            handle_team_accept_invite(
+                client,
+                server,
+                TokenInput {
+                    token,
+                    token_file,
+                    token_stdin,
+                },
+                name,
+                user_id,
+                json_mode,
+            )
+            .await
+        }
         TeamAction::Sync { workspace } => handle_team_sync(client, workspace, json_mode).await,
         TeamAction::Drafts { project_id } => {
             let params: Vec<(&str, String)> = project_id
@@ -260,6 +321,34 @@ pub async fn handle_runner(
     }
 }
 
+async fn handle_team_login(
+    client: &DaemonHttpClient,
+    server: String,
+    token_input: TokenInput,
+    workspace: Option<String>,
+    json_mode: bool,
+) -> CliResult {
+    let resolved_token =
+        resolve_token_secret(token_input, &["RUNLARK_TEAM_TOKEN"], true, "bearer token")?
+            .unwrap_or_default();
+    let mut body = json!({
+        "server_url": server,
+        "bearer_token": resolved_token,
+    });
+    if let Some(wid) = workspace {
+        body["workspace_id"] = json!(wid);
+    }
+    let val = client.post_json("/api/v1/team/login", Some(&body)).await?;
+    print_output(&val, json_mode, |v| {
+        format!(
+            "Logged in as {} ({}) @ {}",
+            v["display_name"].as_str().unwrap_or(""),
+            v["user_id"].as_str().unwrap_or(""),
+            v["server_url"].as_str().unwrap_or("")
+        )
+    })
+}
+
 async fn handle_team_invite(
     client: &DaemonHttpClient,
     workspace: String,
@@ -294,11 +383,18 @@ async fn handle_team_invite(
 async fn handle_team_accept_invite(
     client: &DaemonHttpClient,
     server: String,
-    token: String,
+    token_input: TokenInput,
     name: String,
     user_id: Option<String>,
     json_mode: bool,
 ) -> CliResult {
+    let token = resolve_token_secret(
+        token_input,
+        &["RUNLARK_INVITE_TOKEN", "RUNLARK_TEAM_TOKEN"],
+        true,
+        "invite token",
+    )?
+    .unwrap_or_default();
     let mut body = json!({
         "server_url": server,
         "invite_token": token,
@@ -311,8 +407,13 @@ async fn handle_team_accept_invite(
         .post_json("/api/v1/team/invitations/accept", Some(&body))
         .await?;
     print_output(&val, json_mode, |v| {
+        let token_status = if v["token_saved"].as_bool().unwrap_or(false) {
+            "session token saved"
+        } else {
+            "session token NOT saved"
+        };
         format!(
-            "Joined workspace {} as {} ({})",
+            "Joined workspace {} as {} ({}) [{token_status}]",
             v["member"]["workspace_id"].as_str().unwrap_or(""),
             v["member"]["display_name"].as_str().unwrap_or(""),
             v["member"]["role"].as_str().unwrap_or("")

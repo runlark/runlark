@@ -1,7 +1,7 @@
 use reqwest::Client;
 use runlark_cli::{
-    AppState, LocalBridgeEffector, OutboxConfig, OutboxDispatcher, Scheduler, VerificationService,
-    build_router,
+    AppState, DshEndpoint, LocalBridgeEffector, OutboxConfig, OutboxDispatcher, Scheduler,
+    VerificationService, build_router,
 };
 use runlark_local::{initialize_schema, open_sqlite};
 use serde_json::{Value, json};
@@ -287,4 +287,108 @@ async fn assert_cli_and_history(client: &Client, base: &str, run_id: &str) {
     .await
     .expect("join");
     assert!(plugins_out.status.success());
+}
+
+#[test]
+fn dsh_endpoint_log_origin_strips_query_and_userinfo() {
+    let ep = DshEndpoint::parse("http://user:secret@127.0.0.1:4321/?token=tok_123", None);
+    assert_eq!(ep.log_origin(), "http://127.0.0.1:4321");
+    assert_eq!(ep.token.as_deref(), Some("tok_123"));
+}
+
+#[tokio::test]
+async fn cli_team_login_supports_token_file_and_env_without_argv() {
+    let temp = TempDir::new().expect("temp dir");
+    let token_path = temp.path().join("team.token");
+    fs::write(&token_path, "tok_from_file\n").expect("write token file");
+
+    let app = axum::Router::new()
+        .route(
+            "/api/v1/auth/whoami",
+            axum::routing::get(|| async {
+                axum::Json(json!({ "user_id": "usr_cli", "display_name": "CLI User" }))
+            }),
+        )
+        .route(
+            "/api/v1/team/login",
+            axum::routing::post(|axum::Json(body): axum::Json<Value>| async move {
+                axum::Json(json!({
+                    "user_id": "usr_cli",
+                    "display_name": "CLI User",
+                    "server_url": body["server_url"],
+                    "workspace_id": body["workspace_id"],
+                    "echo_token": body["bearer_token"],
+                }))
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let base = format!("http://{}", listener.local_addr().expect("addr"));
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let base_file = base.clone();
+    let token_str = token_path.to_string_lossy().into_owned();
+    let file_out = tokio::task::spawn_blocking(move || {
+        Command::new(env!("CARGO_BIN_EXE_runlark"))
+            .args([
+                "--daemon-url",
+                &base_file,
+                "--json",
+                "team",
+                "login",
+                "--server",
+                &base_file,
+                "--token-file",
+                &token_str,
+            ])
+            .output()
+            .expect("cli token-file")
+    })
+    .await
+    .expect("join");
+    assert!(
+        file_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&file_out.stderr)
+    );
+    let file_json: Value = serde_json::from_slice(&file_out.stdout).expect("json");
+    assert_eq!(file_json["echo_token"], "tok_from_file");
+
+    let base_env = base.clone();
+    let env_out = tokio::task::spawn_blocking(move || {
+        Command::new(env!("CARGO_BIN_EXE_runlark"))
+            .env("RUNLARK_TEAM_TOKEN", "tok_from_env")
+            .args([
+                "--daemon-url",
+                &base_env,
+                "--json",
+                "team",
+                "login",
+                "--server",
+                &base_env,
+            ])
+            .output()
+            .expect("cli env token")
+    })
+    .await
+    .expect("join");
+    assert!(env_out.status.success());
+    let env_json: Value = serde_json::from_slice(&env_out.stdout).expect("json");
+    assert_eq!(env_json["echo_token"], "tok_from_env");
+
+    let missing_out = tokio::task::spawn_blocking(move || {
+        Command::new(env!("CARGO_BIN_EXE_runlark"))
+            .env_remove("RUNLARK_TEAM_TOKEN")
+            .args(["--daemon-url", &base, "team", "login", "--server", &base])
+            .output()
+            .expect("cli missing token")
+    })
+    .await
+    .expect("join");
+    assert!(!missing_out.status.success());
+
+    server.abort();
 }

@@ -142,46 +142,62 @@ pub(super) async fn exec_resume_run(
                 )
             })?
     };
-    if let Some(ctx) = team_gate::resolve_run_team_context(state, &run)? {
-        team_gate::verify_server_reachable_and_synced(state, &ctx).await?;
+    // In TeamManaged mode, DSH session resume is executed locally via the DSH outbox after
+    // verifying server reachability/sync, then synced back as a fenced runner-state update if leased.
+    let team_ctx = team_gate::resolve_run_team_context(state, &run)?;
+    if let Some(ref ctx) = team_ctx {
+        team_gate::verify_server_reachable_and_synced(state, ctx).await?;
     }
-    let mut conn = state.get_connection().map_err(|e| {
-        api_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "storage_error",
-            e.to_string(),
-        )
-    })?;
-    let session = SessionStore::get_session(&conn, &run.session_id)
-        .map_err(storage_error_to_http)?
-        .ok_or_else(|| {
-            api_error(
-                StatusCode::NOT_FOUND,
-                "session_not_found",
-                format!("Session not found: {}", run.session_id),
-            )
-        })?;
     let now = Timestamp(AppState::current_timestamp_ms());
+    let expected_revision = load_session_revision(state, &run.session_id)?;
     let cmd = SessionCommand::ResumeSession(ResumeSessionCommand {
         command_id: CommandId::from(
             command_id.unwrap_or_else(|| format!("cmd_res_{}", Uuid::new_v4().simple())),
         ),
-        session_id: session.id.clone(),
+        session_id: run.session_id.clone(),
         run_id: run_id.clone(),
         after_seq: None,
-        expected_revision: session.current_revision,
+        expected_revision,
         created_at: now,
     });
-    let outcome = LocalStore::apply_command(&mut conn, &cmd, now).map_err(storage_error_to_http)?;
+    let outcome = {
+        let mut conn = state.get_connection().map_err(|e| {
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                e.to_string(),
+            )
+        })?;
+        LocalStore::apply_command(&mut conn, &cmd, now).map_err(storage_error_to_http)?
+    };
     if let CommandApplyOutcome::Applied { events, .. } = &outcome {
-        state.publish_events(&session.id.0, events);
+        state.publish_events(&run.session_id.0, events);
         state.notify_outbox();
         state.notify_dsh_subscriber();
         state.notify_scheduler();
+        if let Some(ref ctx) = team_ctx {
+            team_gate::sync_team_run_resumed_if_leased(
+                state,
+                ctx,
+                run_id,
+                "session_resumed",
+                &json!({ "run_id": run_id.0 }).to_string(),
+            )
+            .await;
+        }
     }
-    let updated_run = SessionStore::get_run(&conn, run_id)
-        .map_err(storage_error_to_http)?
-        .unwrap_or(run);
+    let updated_run = {
+        let conn = state.get_connection().map_err(|e| {
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                e.to_string(),
+            )
+        })?;
+        SessionStore::get_run(&conn, run_id)
+            .map_err(storage_error_to_http)?
+            .unwrap_or(run)
+    };
     Ok((
         StatusCode::OK,
         ChatDispatchResponse {
@@ -194,6 +210,29 @@ pub(super) async fn exec_resume_run(
             data: serde_json::to_value(&updated_run).unwrap_or(Value::Null),
         },
     ))
+}
+
+fn load_session_revision(
+    state: &AppState,
+    session_id: &runlark_domain::SessionId,
+) -> Result<runlark_domain::Revision, ApiError> {
+    let conn = state.get_connection().map_err(|e| {
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "storage_error",
+            e.to_string(),
+        )
+    })?;
+    Ok(SessionStore::get_session(&conn, session_id)
+        .map_err(storage_error_to_http)?
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::NOT_FOUND,
+                "session_not_found",
+                format!("Session not found: {session_id}"),
+            )
+        })?
+        .current_revision)
 }
 
 pub(super) async fn exec_answer_question(
@@ -241,27 +280,42 @@ pub(super) async fn exec_answer_question(
         expected_revision: session.current_revision,
         created_at: now,
     };
-    if let Some(team) = team_gate::resolve_session_command_team_context(
+    // In TeamManaged mode, DSH approval answers gate on server reachability/sync, execute
+    // via the local DSH outbox, and sync `Running` back via fenced runner reports if leased.
+    let team_ctx = team_gate::resolve_session_command_team_context(
         state,
         &SessionCommand::AnswerQuestion(cmd.clone()),
-    )? {
-        team_gate::verify_server_reachable_and_synced(state, &team.context).await?;
+    )?
+    .map(|t| t.context);
+    if let Some(ref ctx) = team_ctx {
+        team_gate::verify_server_reachable_and_synced(state, ctx).await?;
     }
 
-    let mut conn = state.get_connection().map_err(|e| {
-        api_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "storage_error",
-            e.to_string(),
-        )
-    })?;
-    let outcome =
-        LocalStore::answer_question(&mut conn, cmd, now).map_err(storage_error_to_http)?;
+    let outcome = {
+        let mut conn = state.get_connection().map_err(|e| {
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                e.to_string(),
+            )
+        })?;
+        LocalStore::answer_question(&mut conn, cmd, now).map_err(storage_error_to_http)?
+    };
     if let CommandApplyOutcome::Applied { events, .. } = &outcome {
         state.publish_events(&session.id.0, events);
         state.notify_outbox();
         state.notify_dsh_subscriber();
         state.notify_scheduler();
+        if let Some(ref ctx) = team_ctx {
+            team_gate::sync_team_run_resumed_if_leased(
+                state,
+                ctx,
+                &question.run_id,
+                "question_answered",
+                &json!({ "question_id": question_id.0 }).to_string(),
+            )
+            .await;
+        }
     }
     Ok((
         StatusCode::OK,

@@ -421,7 +421,7 @@ pub async fn accept_invitation(
         runner_name: None,
         updated_at: now,
     };
-    {
+    let prev_session = {
         let conn = state.get_connection().map_err(|e| {
             api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -429,17 +429,32 @@ pub async fn accept_invitation(
                 e.to_string(),
             )
         })?;
+        let prev =
+            TeamAuthStore::get_by_server(&conn, &clean_url).map_err(storage_error_to_http)?;
         TeamAuthStore::save_session(&conn, &session).map_err(storage_error_to_http)?;
-    }
+        prev
+    };
 
-    worker
+    if let Err(err) = worker
         .sync_workspace(
             &clean_url,
             &accepted.bearer_token,
             &accepted.member.workspace_id,
         )
         .await
-        .map_err(team_server_error_to_http)?;
+    {
+        if let Ok(conn) = state.get_connection() {
+            match prev_session {
+                Some(ref prev) => {
+                    let _ = TeamAuthStore::save_session(&conn, prev);
+                }
+                None => {
+                    let _ = TeamAuthStore::delete_by_server(&conn, &clean_url);
+                }
+            }
+        }
+        return Err(team_server_error_to_http(err));
+    }
 
     Ok(Json(AcceptInvitationLocalResponse {
         member: accepted.member,

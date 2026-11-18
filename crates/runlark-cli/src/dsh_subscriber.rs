@@ -94,6 +94,17 @@ impl DshEndpoint {
             token,
         }
     }
+
+    /// Returns a credential-free origin string safe for diagnostic logging.
+    #[must_use]
+    pub fn log_origin(&self) -> String {
+        if let Some((scheme, rest)) = self.origin.split_once("://")
+            && let Some((_, host_part)) = rest.split_once('@')
+        {
+            return format!("{scheme}://{host_part}");
+        }
+        self.origin.clone()
+    }
 }
 
 /// Subscribes the Runlark daemon to DSH `session/follow` streams over `/api/remote.mux`,
@@ -146,6 +157,15 @@ impl DshSubscriber {
     /// Panics only if the HTTP client backend fails to initialize.
     #[must_use]
     pub fn new(state: AppState, dsh_url: &str, token: Option<String>) -> Self {
+        Self::from_endpoint(state, DshEndpoint::parse(dsh_url, token))
+    }
+
+    /// Creates a new [`DshSubscriber`] from a pre-parsed [`DshEndpoint`].
+    ///
+    /// # Panics
+    /// Panics only if the HTTP client backend fails to initialize.
+    #[must_use]
+    pub fn from_endpoint(state: AppState, endpoint: DshEndpoint) -> Self {
         let http = Client::builder()
             .redirect(Policy::none())
             .timeout(Duration::from_secs(10))
@@ -153,7 +173,7 @@ impl DshSubscriber {
             .expect("reqwest client must build");
         Self {
             state,
-            endpoint: DshEndpoint::parse(dsh_url, token),
+            endpoint,
             http,
             poll_interval: Duration::from_secs(2),
         }
