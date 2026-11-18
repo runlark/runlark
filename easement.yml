@@ -27,6 +27,10 @@ components:
     in: crates/runlark-wasm/**
     because: "Versioned WIT host, package manifest verification, digest pinning and bounded Wasmtime execution"
 
+  runlark-server:
+    in: crates/runlark-server/**
+    because: "Optional SaaS/self-host collaboration server over PostgreSQL and CAS; communicates via HTTP protocol"
+
   wit:
     in: wit/**
     because: "Versioned WIT contracts defining host/guest workflow and validator boundaries"
@@ -125,6 +129,18 @@ rules:
         because: "Domain is pure: no database dependencies"
       - name: reqwest
         because: "Domain is pure: no HTTP networking"
+      - name: tokio-postgres
+        because: "Domain is pure: no PostgreSQL dependencies"
+      - name: deadpool-postgres
+        because: "Domain is pure: no PostgreSQL pool dependencies"
+
+  runlark-server:
+    may_depend_on:
+      - runlark-domain
+    forbid_external:
+      - name: rusqlite
+        because: "Collaboration server uses PostgreSQL, never local SQLite"
+    because: "Collaboration server depends only on pure domain contracts and PostgreSQL"
 
   runlark-cli:
     may_depend_on:
@@ -268,6 +284,21 @@ examples:
   - from: crates/runlark-wasm/src/lib.rs
     to: crates/runlark-domain/src/lib.rs
     expect: allowed
+  - from: crates/runlark-server/src/lib.rs
+    to: crates/runlark-domain/src/lib.rs
+    expect: allowed
+  - from: crates/runlark-server/src/lib.rs
+    to: crates/runlark-local/src/lib.rs
+    expect: rejected
+  - from: crates/runlark-server/src/lib.rs
+    to: crates/runlark-cli/src/lib.rs
+    expect: rejected
+  - from: crates/runlark-cli/src/lib.rs
+    to: crates/runlark-server/src/lib.rs
+    expect: rejected
+  - from: crates/runlark-local/src/lib.rs
+    to: crates/runlark-server/src/lib.rs
+    expect: rejected
   - from: packages/dsh-plugin/src/index.ts
     to: web/src/app/index.tsx
     expect: rejected

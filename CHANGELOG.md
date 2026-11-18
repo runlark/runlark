@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Реализован сервер совместной работы `crates/runlark-server` и доменный фундамент A2:
+  - В `runlark-domain` добавлены чистые контракты collaboration/sync (`Workspace`, `WorkspaceRole`, `WorkspaceInvitation`, `RunnerRegistration`, `RunOwnership`, `TeamCommand`, `WorkspaceSnapshot`, `WorkspaceEventEnvelope`, `TaskComment`, `OfflineDraft`, fencing/promotion guards).
+  - Добавлен `crates/runlark-server` (Axum + PostgreSQL, единый протокол для SaaS и self-host, CLI `bootstrap-owner`, миграция `0001_initial_team.sql`, SHA-256 bearer auth и RBAC-проверки на границе, приглашения, `solo -> team` promotion ack без активных runs, эксклюзивное назначение одного runner с `lease_epoch` fencing без авто-takeover, `REPEATABLE READ` `snapshot + cursor_seq`, дедупликация команд по `command_id` и проверка `expected_revision`, `CancelRun`, append-only комментарии, привязанные решения и workspace-изолированные CAS-артефакты с проверкой SHA-256).
+  - Обновлены `easement.yml` (`runlark-server` изолирован от `runlark-local`/`runlark-cli`/`rusqlite`), `justfile`, `scripts/with-test-postgres.mjs` и `.github/workflows/ci.yml` (`postgres:16-alpine` service) с реальными PostgreSQL интеграционными тестами.
 - Реализован фундамент и сквозной вертикальный срез A1 (solo alpha):
   - Расширен `runlark-domain` и `runlark-local` (миграция `0004_a1_board_and_history.sql`, `Project`, `Task`, `Attempt`, `Decision`, `BudgetPolicy`, `CostSummary`, `BoardCommand`, CAS-хранилище артефактов `ArtifactCasStore`, проекция доски `BoardProjection`, FIFO-очередь и восстановление после рестарта).
   - Добавлен WASM host `crates/runlark-wasm`, контракт `wit/runlark-workflow.wit` и first-party workflow-пакет `workflows/solo-default` (manifest, declarative stages, WASM validator с digest pinning, ограничениями fuel/memory и изоляцией capabilities).

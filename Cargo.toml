@@ -5,6 +5,7 @@ members = [
   "crates/runlark-local",
   "crates/runlark-wasm",
   "crates/runlark-cli",
+  "crates/runlark-server",
 ]
 
 [workspace.package]
@@ -48,6 +49,8 @@ tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 futures-util = "0.3"
 sha2 = "0.10"
 hex = "0.4"
+tokio-postgres = "0.7"
+deadpool-postgres = "0.14"
 wasmtime = { version = "36.0.21", default-features = false, features = [
   "cranelift",
   "component-model",

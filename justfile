@@ -64,11 +64,12 @@ security:
 
 lint: lint-scope lint-size lint-arch lint-rust lint-wasm lint-ts lint-ui lint-files lint-skills security
 
-# Observable guard behavior against isolated real Git repositories.
+# Observable guard behavior against isolated real Git repositories and real PostgreSQL.
 test:
     node --test scripts/*.test.mjs
     node --experimental-strip-types --test packages/dsh-plugin/test/*.test.ts
-    cargo test --workspace --all-targets --all-features
+    cargo test --workspace --exclude runlark-server --all-targets --all-features
+    node scripts/with-test-postgres.mjs cargo test -p runlark-server --all-targets --all-features
 
 docs:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
