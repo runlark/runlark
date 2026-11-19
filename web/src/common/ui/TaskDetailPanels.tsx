@@ -20,6 +20,7 @@ export interface RunBudgetTabProps {
   readonly strings: RunlarkStrings;
   readonly locale: Locale;
   readonly actionPending: string | null;
+  readonly offlineBlocked?: boolean;
   readonly onStopRun: () => void;
   readonly onResumeRun: () => void;
   readonly onVerifyRun: () => void;
@@ -31,6 +32,7 @@ export function RunBudgetTab({
   strings,
   locale,
   actionPending,
+  offlineBlocked = false,
   onStopRun,
   onResumeRun,
   onVerifyRun,
@@ -43,9 +45,11 @@ export function RunBudgetTab({
   const stopHintId = useId();
   const resumeHintId = useId();
   const verifyHintId = useId();
-  const stopDisabled = busy || (runStatus !== "running" && runStatus !== "queued");
-  const resumeDisabled = busy || runStatus === "completed" || runStatus === "stopped";
-  const verifyDisabled = busy || runStatus === "queued";
+  const stopDisabled =
+    busy || offlineBlocked || (runStatus !== "running" && runStatus !== "queued");
+  const resumeDisabled =
+    busy || offlineBlocked || runStatus === "completed" || runStatus === "stopped";
+  const verifyDisabled = busy || offlineBlocked || runStatus === "queued";
 
   return (
     <div className="rl-field" style={{ gap: "0.75rem" }}>
@@ -156,7 +160,9 @@ export function RunBudgetTab({
           <ul className="rl-event-list">
             {attempts.map((att) => (
               <li key={att.id} className="rl-event-row">
-                <span className="rl-event-seq">#{String(att.attempt_number)}</span>
+                <span className="rl-event-seq">
+                  #{String(att.attempt_no ?? att.attempt_number ?? 0)}
+                </span>
                 <span className="rl-event-type">{att.outcome.status}</span>
                 <span className="rl-figure">
                   {att.cost_micro_usd === null
@@ -179,10 +185,12 @@ export function DiffArtifactsTab({
   detail,
   diff,
   strings,
+  artifactsSlot,
 }: {
   readonly detail: BoardTaskEntry;
   readonly diff: RunDiffResponse | null;
   readonly strings: RunlarkStrings;
+  readonly artifactsSlot?: ReactNode;
 }): ReactNode {
   return (
     <div className="rl-field" style={{ gap: "0.75rem" }}>
@@ -204,24 +212,26 @@ export function DiffArtifactsTab({
         )}
       </article>
 
-      <article className="rl-card">
-        <h3 className="rl-section-heading">
-          {strings.casArtifactsHeading(detail.artifacts.length)}
-        </h3>
-        {detail.artifacts.length === 0 ? (
-          <p className="rl-status-line">{strings.artifactsEmpty}</p>
-        ) : (
-          <ul className="rl-event-list">
-            {detail.artifacts.map((art) => (
-              <li key={`${art.label}-${art.digest_sha256}`} className="rl-event-row">
-                <span className="rl-event-type">{art.label}</span>
-                <span className="rl-figure">{String(art.size_bytes)} B</span>
-                <p className="rl-event-detail rl-mono">{art.digest_sha256}</p>
-              </li>
-            ))}
-          </ul>
-        )}
-      </article>
+      {artifactsSlot ?? (
+        <article className="rl-card">
+          <h3 className="rl-section-heading">
+            {strings.casArtifactsHeading(detail.artifacts.length)}
+          </h3>
+          {detail.artifacts.length === 0 ? (
+            <p className="rl-status-line">{strings.artifactsEmpty}</p>
+          ) : (
+            <ul className="rl-event-list">
+              {detail.artifacts.map((art) => (
+                <li key={`${art.label}-${art.digest_sha256}`} className="rl-event-row">
+                  <span className="rl-event-type">{art.label}</span>
+                  <span className="rl-figure">{String(art.size_bytes)} B</span>
+                  <p className="rl-event-detail rl-mono">{art.digest_sha256}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </article>
+      )}
     </div>
   );
 }
@@ -241,6 +251,7 @@ export interface AcceptancePrTabProps {
   readonly strings: RunlarkStrings;
   readonly actionPending: string | null;
   readonly prUnknownReason: string | null;
+  readonly offlineBlockedReason?: string | null;
   readonly onAccept: (input: AcceptTaskBoundInput) => void;
   readonly onReject: (reason: string) => void;
   readonly onCreatePr: (input: {
@@ -255,6 +266,7 @@ export function AcceptancePrTab({
   strings,
   actionPending,
   prUnknownReason,
+  offlineBlockedReason = null,
   onAccept,
   onReject,
   onCreatePr,
@@ -279,12 +291,14 @@ export function AcceptancePrTab({
   const busy = actionPending !== null;
   const evidenceArtifact = [...artifacts].reverse().find((a) => a.label === "evidence_bundle");
   const hasEvidence = evidenceArtifact !== undefined;
-  const canAccept = !busy && task.stage === "acceptance" && hasEvidence;
+  const offlineBlocked = offlineBlockedReason !== null;
+  const canAccept = !busy && !offlineBlocked && task.stage === "acceptance" && hasEvidence;
   const hasAcceptDecision = decisions.some((d) => d.kind === "accept");
-  const canCreatePr = !busy && hasAcceptDecision && task.stage === "done";
+  const canCreatePr = !busy && !offlineBlocked && hasAcceptDecision && task.stage === "done";
 
   const handleRejectSubmit = (e: FormEvent<HTMLFormElement>): void => {
     e.preventDefault();
+    if (busy || offlineBlocked || task.stage !== "acceptance") return;
     if (!rejectReason.trim()) {
       setRejectError(strings.rejectReasonRequired);
       return;
@@ -346,7 +360,7 @@ export function AcceptancePrTab({
           />
           {!canAccept ? (
             <span id={acceptHintId} className="rl-meta-label">
-              {strings.acceptDisabledHint}
+              {offlineBlockedReason ?? strings.acceptDisabledHint}
             </span>
           ) : null}
         </div>
@@ -360,7 +374,7 @@ export function AcceptancePrTab({
             type="text"
             className="rl-input"
             value={rejectReason}
-            disabled={busy || task.stage !== "acceptance"}
+            disabled={busy || offlineBlocked || task.stage !== "acceptance"}
             aria-invalid={rejectError ? "true" : undefined}
             aria-describedby={rejectError ? rejectErrId : undefined}
             onChange={(e) => {
@@ -378,7 +392,7 @@ export function AcceptancePrTab({
               type="submit"
               variant="danger"
               label={strings.rejectBtn}
-              disabled={busy || task.stage !== "acceptance"}
+              disabled={busy || offlineBlocked || task.stage !== "acceptance"}
               testId="rl-task-reject-btn"
             />
           </div>

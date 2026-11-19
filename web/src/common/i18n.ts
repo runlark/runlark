@@ -10,6 +10,7 @@ export interface RunlarkStrings {
   readonly navDecisions: string;
   readonly navProjects: string;
   readonly navPlugins: string;
+  readonly navTeam: string;
   readonly navMenuOpen: string;
   readonly navMenuClose: string;
   readonly navDrawerLabel: string;
@@ -30,6 +31,7 @@ export interface RunlarkStrings {
   readonly breadcrumbDecisions: string;
   readonly breadcrumbProjects: string;
   readonly breadcrumbPlugins: string;
+  readonly breadcrumbTeam: string;
   readonly slotsSummary: (used: number, max: number, queued: number) => string;
   readonly attentionTitle: (count: number) => string;
   readonly attentionAction: string;
@@ -69,6 +71,8 @@ export interface RunlarkStrings {
   readonly mobileStageSelect: string;
   readonly cardDragHandle: (title: string) => string;
   readonly cardMoveMenu: (title: string) => string;
+  readonly cardCommentCount: (count: number) => string;
+  readonly cardLeaseEpoch: (epoch: number) => string;
   readonly moveToLabel: (stage: string) => string;
   readonly moveDisabledHint: string;
   readonly openTaskLabel: string;
@@ -92,6 +96,7 @@ export interface RunlarkStrings {
   readonly taskTabRunBudget: string;
   readonly taskTabDiffArtifacts: string;
   readonly taskTabAcceptancePr: string;
+  readonly taskTabComments: string;
   readonly taskTabEventsChat: string;
   readonly clarifyLabel: string;
   readonly clarifySubmit: string;
@@ -165,6 +170,7 @@ const EN: RunlarkStrings = {
   navDecisions: "Decisions",
   navProjects: "Projects",
   navPlugins: "Plugins",
+  navTeam: "Team",
   navMenuOpen: "Open navigation menu",
   navMenuClose: "Close navigation menu",
   navDrawerLabel: "Runlark navigation",
@@ -185,6 +191,7 @@ const EN: RunlarkStrings = {
   breadcrumbDecisions: "Decisions",
   breadcrumbProjects: "Projects",
   breadcrumbPlugins: "Plugins",
+  breadcrumbTeam: "Team",
   slotsSummary: (used, max, queued) =>
     `${String(used)}/${String(max)} slots · ${String(queued)} queued`,
   attentionTitle: (count) =>
@@ -226,6 +233,8 @@ const EN: RunlarkStrings = {
   mobileStageSelect: "Active board stage",
   cardDragHandle: (title) => `Drag ${title} to another stage`,
   cardMoveMenu: (title) => `Move or actions for ${title}`,
+  cardCommentCount: (count) => `${String(count)} cmt`,
+  cardLeaseEpoch: (epoch) => `e${String(epoch)}`,
   moveToLabel: (stage) => `Move to ${stage}`,
   moveDisabledHint: "Current stage",
   openTaskLabel: "Open task",
@@ -249,6 +258,7 @@ const EN: RunlarkStrings = {
   taskTabRunBudget: "Run & Budget",
   taskTabDiffArtifacts: "Diff & Artifacts",
   taskTabAcceptancePr: "Acceptance & PR",
+  taskTabComments: "Comments",
   taskTabEventsChat: "Events & Chat",
   clarifyLabel: "Clarification notes",
   clarifySubmit: "Record clarification",

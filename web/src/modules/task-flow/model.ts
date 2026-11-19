@@ -23,6 +23,7 @@ export type TaskDetailTab =
   | "run_budget"
   | "diff_artifacts"
   | "acceptance_pr"
+  | "comments"
   | "events_chat";
 
 export interface TaskFlowModel {
@@ -122,6 +123,7 @@ function errMsg(error: unknown): string {
 export function reatomTaskFlowModel(
   api: BoardApiClient,
   initialLocale: Locale = "en",
+  onMutationError?: (error: unknown, key: string) => void,
 ): TaskFlowModel {
   const prefix = "taskFlow";
   const locale = atom<Locale>(initialLocale, `${prefix}.locale`);
@@ -263,6 +265,7 @@ export function reatomTaskFlowModel(
       await wrap(syncOnce());
     } catch (error: unknown) {
       actionError.set(errMsg(error));
+      onMutationError?.(error, key);
     } finally {
       actionPending.set(null);
     }

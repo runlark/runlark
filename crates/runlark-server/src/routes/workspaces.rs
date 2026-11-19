@@ -178,6 +178,20 @@ pub async fn update_member_role(
     Ok(Json(updated))
 }
 
+/// Lists invitations for a workspace (without exposing secret tokens).
+///
+/// # Errors
+/// Returns [`ServerError`] on auth/permission denial.
+pub async fn list_invitations(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    Path(wid): Path<String>,
+) -> Result<Json<Vec<WorkspaceInvitation>>, ServerError> {
+    let user = authenticate_headers(&state.pool, &headers).await?;
+    let list = invitations::list_invitations(&state.pool, &user, &WorkspaceId::from(wid)).await?;
+    Ok(Json(list))
+}
+
 /// Creates a workspace invitation returning the one-time secret `invite_token`.
 ///
 /// # Errors

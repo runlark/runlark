@@ -1,6 +1,8 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { TASK_STAGES, taskStageLabel, type BoardTaskEntry, type TaskStage } from "../board-types";
 import type { Locale, RunlarkStrings } from "../i18n";
+import type { TeamStrings } from "../team-i18n";
+import type { RunnerRegistration } from "../team-types";
 import { ActionButton } from "./ActionButton";
 import { BoardColumn } from "./BoardColumn";
 
@@ -10,6 +12,8 @@ export interface KanbanBoardSurfaceProps {
   readonly onMobileStageChange: (stage: TaskStage) => void;
   readonly hasActiveFilter: boolean;
   readonly strings: RunlarkStrings;
+  readonly teamStrings?: TeamStrings;
+  readonly runners?: readonly RunnerRegistration[];
   readonly locale: Locale;
   readonly moveDisabled: boolean;
   readonly announcement: string;
@@ -23,6 +27,8 @@ export function KanbanBoardSurface({
   onMobileStageChange,
   hasActiveFilter,
   strings,
+  teamStrings,
+  runners,
   locale,
   moveDisabled,
   announcement,
@@ -123,6 +129,8 @@ export function KanbanBoardSurface({
               entries={columns[stage]}
               hasActiveFilter={hasActiveFilter}
               strings={strings}
+              {...(teamStrings ? { teamStrings } : {})}
+              {...(runners ? { runners } : {})}
               locale={locale}
               draggingTaskId={draggingTaskId}
               draggingSourceStage={draggingSourceStage}

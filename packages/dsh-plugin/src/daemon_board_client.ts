@@ -160,6 +160,43 @@ export class DaemonBoardClient {
     return this.request("GET", `/api/v1/runs/${encodeURIComponent(runId)}/diff`, undefined, signal);
   }
 
+  async getArtifact(
+    digest: string,
+    meta: boolean,
+    signal?: AbortSignal,
+  ): Promise<{ readonly contentType: string; readonly body: Buffer }> {
+    const q = meta ? "?meta=true" : "";
+    const path = `/api/v1/artifacts/${encodeURIComponent(digest)}${q}`;
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method: "GET",
+      ...(signal ? { signal } : {}),
+    });
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (!res.ok) {
+      let parsed: unknown = null;
+      const text = buf.toString("utf8");
+      if (text.trim().length > 0) {
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          parsed = text;
+        }
+      }
+      const msg =
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "message" in parsed &&
+        typeof (parsed as { message?: unknown }).message === "string"
+          ? (parsed as { message: string }).message
+          : `Daemon request GET ${path} failed (${res.status})`;
+      throw new DaemonHttpError(res.status, parsed, msg);
+    }
+    return {
+      contentType: res.headers.get("content-type") ?? "application/octet-stream",
+      body: buf,
+    };
+  }
+
   verifyRun(runId: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     return this.request("POST", `/api/v1/runs/${encodeURIComponent(runId)}/verify`, body, signal);
   }
@@ -232,6 +269,15 @@ export class DaemonBoardClient {
       "PATCH",
       `/api/v1/team/workspaces/${encodeURIComponent(wid)}/members/${encodeURIComponent(uid)}`,
       body,
+      signal,
+    );
+  }
+
+  listInvitations(wid: string, signal?: AbortSignal): Promise<unknown> {
+    return this.request(
+      "GET",
+      `/api/v1/team/workspaces/${encodeURIComponent(wid)}/invitations`,
+      undefined,
       signal,
     );
   }

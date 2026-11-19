@@ -4,14 +4,14 @@ use axum::{Json, Router};
 use reqwest::Client;
 use runlark_cli::{AppState, build_router};
 use runlark_domain::{
-    BudgetPolicy, CommandId, CostSummary, CursorSeq, PolicyDigest, Project, ProjectId, Revision,
-    Run, RunId, RunStatus, SendPromptCommand, ServerPromotionAck, Session, SessionCommand,
-    SessionId, SessionStatus, Task, TaskId, TaskKind, TaskStage, Timestamp, UserId, WorkflowStage,
-    WorkspaceId, WorkspaceMember, WorkspaceRole,
+    ArtifactKind, BudgetPolicy, CommandId, CostSummary, CursorSeq, PolicyDigest, Project,
+    ProjectId, Revision, Run, RunId, RunStatus, SendPromptCommand, ServerPromotionAck, Session,
+    SessionCommand, SessionId, SessionStatus, Task, TaskId, TaskKind, TaskStage, Timestamp, UserId,
+    WorkflowStage, WorkspaceId, WorkspaceMember, WorkspaceRole,
 };
 use runlark_local::{
-    ProjectStore, SessionStore, SyncStore, TaskStore, TeamAuthSession, TeamAuthStore,
-    initialize_schema, open_sqlite,
+    ArtifactCasStore, ProjectStore, SessionStore, SyncStore, TaskStore, TeamAuthSession,
+    TeamAuthStore, initialize_schema, open_sqlite,
 };
 use serde_json::{Value, json};
 use std::path::Path;
@@ -333,4 +333,80 @@ async fn accept_invitation_preserves_one_time_token_when_initial_sync_fails() {
 
     daemon_handle.abort();
     srv_handle.abort();
+}
+
+#[tokio::test]
+async fn remote_run_diff_falls_back_to_verified_cas_and_rejects_corrupt_blob() {
+    let tmp = TempDir::new().unwrap();
+    let db_path = tmp.path().join("runlark.db");
+    let (daemon_url, daemon_handle) = spawn_test_daemon(&db_path).await;
+    seed_solo_and_team_fixture(&db_path);
+
+    let conn = open_sqlite(&db_path).unwrap();
+    let mut remote_run = make_run(
+        "run_remote_cas",
+        "sess_team",
+        ProjectId::from("proj_team"),
+        TaskId::from("tsk_team"),
+    );
+    remote_run.worktree_path.clear();
+    remote_run.base_sha = Some("aaaa1111".to_string());
+    remote_run.head_sha = Some("bbbb2222".to_string());
+    SessionStore::save_run(&conn, &remote_run).unwrap();
+
+    let cas = ArtifactCasStore::new(tmp.path().join("cas"));
+    let diff_bytes = b"--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n+pub fn ok() {}\n";
+    let art = cas
+        .put_bytes(
+            &conn,
+            ArtifactKind::Diff,
+            "text/x-diff",
+            diff_bytes,
+            Timestamp(500),
+        )
+        .unwrap();
+    ArtifactCasStore::link_to_run(
+        &conn,
+        &remote_run.id,
+        &art.digest_sha256,
+        "diff",
+        Timestamp(500),
+    )
+    .unwrap();
+    drop(conn);
+
+    let client = Client::new();
+    let ok_res = client
+        .get(format!("{daemon_url}/api/v1/runs/run_remote_cas/diff"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ok_res.status(), 200);
+    let ok_body: Value = ok_res.json().await.unwrap();
+    assert_eq!(ok_body["digest_sha256"], art.digest_sha256.as_ref());
+    assert_eq!(ok_body["changed_files"], json!(["src/lib.rs"]));
+    assert!(
+        ok_body["diff"]
+            .as_str()
+            .unwrap()
+            .contains("+pub fn ok() {}")
+    );
+
+    // Tamper CAS blob on disk: diff endpoint must fail closed with 500 corrupt_artifact.
+    let blob_path = tmp
+        .path()
+        .join("cas")
+        .join("sha256")
+        .join(art.digest_sha256.as_ref());
+    std::fs::write(&blob_path, b"corrupted payload").unwrap();
+    let bad_res = client
+        .get(format!("{daemon_url}/api/v1/runs/run_remote_cas/diff"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_res.status(), 500);
+    let bad_body: Value = bad_res.json().await.unwrap();
+    assert_eq!(bad_body["error"], "corrupt_artifact");
+
+    daemon_handle.abort();
 }

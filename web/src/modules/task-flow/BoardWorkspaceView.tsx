@@ -3,16 +3,25 @@ import { reatomComponent } from "@reatom/react";
 import { useId, type ReactNode } from "react";
 import { formatMicroUsd, type TaskKind } from "@/common/board-types";
 import { getStrings } from "@/common/i18n";
+import { getTeamStrings } from "@/common/team-i18n";
+import { isTeamManagedMode } from "@/common/team-types";
 import { ActionButton } from "@/common/ui/ActionButton";
 import { CreateTaskDialog } from "@/common/ui/CreateTaskDialog";
 import { KanbanBoardSurface } from "@/common/ui/KanbanBoardSurface";
 import { StatusBadge } from "@/common/ui/StatusBadge";
+import type { TeamCollabModel } from "@/modules/team-collab";
 import type { TaskFlowModel } from "./model";
 
-export const BoardContentView = reatomComponent<{ readonly model: TaskFlowModel }>(
-  ({ model }): ReactNode => {
-    const strings = getStrings(model.locale());
+export interface BoardContentViewProps {
+  readonly model: TaskFlowModel;
+  readonly teamModel: TeamCollabModel;
+}
+
+export const BoardContentView = reatomComponent<BoardContentViewProps>(
+  ({ model, teamModel }): ReactNode => {
     const locale = model.locale();
+    const strings = getStrings(locale);
+    const teamStrings = getTeamStrings(locale);
     const board = model.board();
     const columns = model.filteredColumns();
     const decisions = model.decisionEntries();
@@ -20,7 +29,7 @@ export const BoardContentView = reatomComponent<{ readonly model: TaskFlowModel 
     const kf = model.kindFilter();
     const decOnly = model.decisionsOnly();
     const pending = model.actionPending();
-    const err = model.actionError();
+    const err = model.actionError() ?? teamModel.actionError();
     const dialogKind = model.createDialogKind();
 
     const searchId = useId();
@@ -34,6 +43,10 @@ export const BoardContentView = reatomComponent<{ readonly model: TaskFlowModel 
       unknown_attempts: 0,
     };
     const hasFilter = search.trim().length > 0 || kf !== "all" || decOnly;
+    const isTeam = isTeamManagedMode(board?.ownership_mode ?? board?.project?.ownership);
+    const isOfflineLocked = isTeam && teamModel.connectionState() === "offline";
+    const runners = board?.runners ?? teamModel.runners();
+    const activeProjectId = model.selectedProjectId() ?? board?.project?.project_id ?? null;
 
     return (
       <>
@@ -126,7 +139,10 @@ export const BoardContentView = reatomComponent<{ readonly model: TaskFlowModel 
               variant="secondary"
               label={strings.refreshBtn}
               disabled={pending !== null}
-              onClick={wrap(() => void model.refreshAll())}
+              onClick={wrap(() => {
+                void model.refreshAll();
+                teamModel.refreshTeam();
+              })}
             />
             <ActionButton
               variant="secondary"
@@ -151,8 +167,10 @@ export const BoardContentView = reatomComponent<{ readonly model: TaskFlowModel 
           onMobileStageChange={wrap((s) => model.mobileStage.set(s))}
           hasActiveFilter={hasFilter}
           strings={strings}
+          teamStrings={teamStrings}
+          runners={runners}
           locale={locale}
-          moveDisabled={pending !== null}
+          moveDisabled={pending !== null || isOfflineLocked}
           announcement={model.announcement()}
           onOpenTask={wrap((id) => void model.openTask(id))}
           onMoveTask={wrap((id, stage, rev) => void model.moveTask(id, stage, rev))}
@@ -161,9 +179,26 @@ export const BoardContentView = reatomComponent<{ readonly model: TaskFlowModel 
         <CreateTaskDialog
           open={dialogKind !== null}
           initialKind={dialogKind ?? "standard"}
-          submitting={pending === "createTask"}
+          submitting={pending === "createTask" || teamModel.actionPending() !== null}
           submitError={err}
+          offlineBlocked={isOfflineLocked}
           strings={strings}
+          {...(isTeam && activeProjectId
+            ? {
+                saveDraftLabel: teamStrings.saveTaskOfflineDraftBtn,
+                onSaveOfflineDraft: wrap(async (input) => {
+                  const ok = await wrap(
+                    teamModel.createOfflineTaskDraft({
+                      projectId: activeProjectId,
+                      ...input,
+                    }),
+                  );
+                  if (ok) {
+                    model.closeCreateDialog();
+                  }
+                }),
+              }
+            : {})}
           onClose={wrap(() => model.closeCreateDialog())}
           onSubmit={wrap((input) => void model.createTask(input))}
         />

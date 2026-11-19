@@ -290,6 +290,41 @@ pub async fn update_member_role(
     Ok(Json(member))
 }
 
+/// Lists workspace invitations from `runlark-server` (without exposing secret tokens).
+///
+/// # Errors
+/// Returns `503` if offline/unauthenticated or forwards server RBAC/validation status.
+pub async fn list_invitations(
+    State(state): State<AppState>,
+    Path(wid): Path<String>,
+) -> Result<Json<Vec<WorkspaceInvitation>>, ApiError> {
+    let wid_seg =
+        validate_team_path_segment(&wid, "workspace_id").map_err(team_server_error_to_http)?;
+    let ws_id = WorkspaceId::from(wid_seg);
+    let auth = resolve_auth(&state, None, Some(&ws_id))?;
+    let url = format!(
+        "{}/api/v1/workspaces/{wid_seg}/invitations",
+        auth.server_url
+    );
+    let resp = TeamSyncWorker::new(state)
+        .http()
+        .get(&url)
+        .bearer_auth(&auth.bearer_token)
+        .send()
+        .await
+        .map_err(|e| {
+            api_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "team_server_offline",
+                e.to_string(),
+            )
+        })?;
+    let items: Vec<WorkspaceInvitation> = parse_server_json_response(resp)
+        .await
+        .map_err(team_server_error_to_http)?;
+    Ok(Json(items))
+}
+
 /// Creates a workspace invitation on `runlark-server`.
 ///
 /// # Errors

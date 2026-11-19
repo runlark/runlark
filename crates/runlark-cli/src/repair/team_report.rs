@@ -340,7 +340,9 @@ async fn sync_or_queue_evidence_artifacts(
     let sync = TeamSyncWorker::new(state.clone());
 
     for (meta, label) in linked {
-        if meta.kind != ArtifactKind::EvidenceBundle || !cas.has_blob(&meta.digest_sha256) {
+        if !matches!(meta.kind, ArtifactKind::EvidenceBundle | ArtifactKind::Diff)
+            || !cas.has_blob(&meta.digest_sha256)
+        {
             continue;
         }
         let command_id =

@@ -433,8 +433,8 @@ async fn assert_reconnect_recovery_and_accept(
         .sync_workspace(mock_url, "tok", &WorkspaceId::from("ws_pipe"))
         .await
         .unwrap();
-    assert!(sync_summary.cas_uploaded >= 1);
-    assert_eq!(sync_summary.outbox_acked, 2);
+    assert!(sync_summary.cas_uploaded >= 2);
+    assert_eq!(sync_summary.outbox_acked, 3);
 
     let recorded = reports.lock().await;
     assert_eq!(recorded.len(), 2);
@@ -460,6 +460,11 @@ async fn assert_reconnect_recovery_and_accept(
         data.commands_seen
             .iter()
             .any(|c| matches!(c, TeamCommand::AttachArtifact(a) if a.label == "evidence_bundle"))
+    );
+    assert!(
+        data.commands_seen
+            .iter()
+            .any(|c| matches!(c, TeamCommand::AttachArtifact(a) if a.label == "diff"))
     );
     drop(data);
 

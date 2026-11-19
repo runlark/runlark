@@ -1,6 +1,8 @@
 import { useState, type ReactNode } from "react";
 import { taskStageLabel, type BoardTaskEntry, type TaskStage } from "../board-types";
 import type { Locale, RunlarkStrings } from "../i18n";
+import type { TeamStrings } from "../team-i18n";
+import type { RunnerRegistration } from "../team-types";
 import { BoardCard } from "./BoardCard";
 import { DropArrowSvg } from "./SvgIcons";
 
@@ -9,6 +11,8 @@ export interface BoardColumnProps {
   readonly entries: readonly BoardTaskEntry[];
   readonly hasActiveFilter: boolean;
   readonly strings: RunlarkStrings;
+  readonly teamStrings?: TeamStrings;
+  readonly runners?: readonly RunnerRegistration[];
   readonly locale: Locale;
   readonly draggingTaskId: string | null;
   readonly draggingSourceStage: TaskStage | null;
@@ -24,6 +28,8 @@ export function BoardColumn({
   entries,
   hasActiveFilter,
   strings,
+  teamStrings,
+  runners,
   locale,
   draggingTaskId,
   draggingSourceStage,
@@ -95,6 +101,8 @@ export function BoardColumn({
               key={entry.task.id}
               entry={entry}
               strings={strings}
+              {...(teamStrings ? { teamStrings } : {})}
+              {...(runners ? { runners } : {})}
               locale={locale}
               isDragging={draggingTaskId === entry.task.id}
               moveDisabled={moveDisabled}

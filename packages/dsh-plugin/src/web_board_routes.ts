@@ -1,9 +1,35 @@
+import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { DaemonBoardClient, DaemonHttpError } from "./daemon_board_client.ts";
 import type { ChatDispatchPayload } from "./daemon_board_client.ts";
 
 type SendJsonFn = (res: ServerResponse, status: number, body: unknown) => void;
 type ReadJsonFn = (req: IncomingMessage) => Promise<Record<string, unknown>>;
+
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/u;
+
+class InvalidPathSegmentError extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+function decodeSafeSegment(raw: string, field: string): string {
+  const value = decodeURIComponent(raw);
+  if (
+    value.length === 0 ||
+    value === "." ||
+    value === ".." ||
+    value.includes("/") ||
+    value.includes("\\") ||
+    /[\u0000-\u001f\u007f]/u.test(value)
+  ) {
+    throw new InvalidPathSegmentError("invalid_path_segment", `Invalid ${field} path segment`);
+  }
+  return value;
+}
 
 export async function handleRunlarkBoardWebRequest(
   req: IncomingMessage,
@@ -47,7 +73,7 @@ export async function handleRunlarkBoardWebRequest(
         res,
         200,
         await boardClient.promoteProjectToTeam(
-          decodeURIComponent(projectPromoteMatch[1]),
+          decodeSafeSegment(projectPromoteMatch[1], "project_id"),
           body,
           signal,
         ),
@@ -57,7 +83,11 @@ export async function handleRunlarkBoardWebRequest(
 
     const projectMatch = /^\/api\/runlark\/projects\/([^/]+)$/u.exec(path);
     if (method === "GET" && projectMatch) {
-      sendJson(res, 200, await boardClient.getProject(decodeURIComponent(projectMatch[1]), signal));
+      sendJson(
+        res,
+        200,
+        await boardClient.getProject(decodeSafeSegment(projectMatch[1], "project_id"), signal),
+      );
       return true;
     }
 
@@ -76,7 +106,7 @@ export async function handleRunlarkBoardWebRequest(
 
     const taskCommentMatch = /^\/api\/runlark\/tasks\/([^/]+)\/comments$/u.exec(path);
     if (taskCommentMatch) {
-      const taskId = decodeURIComponent(taskCommentMatch[1]);
+      const taskId = decodeSafeSegment(taskCommentMatch[1], "task_id");
       if (method === "GET") {
         sendJson(res, 200, await boardClient.listTaskComments(taskId, signal));
         return true;
@@ -94,7 +124,7 @@ export async function handleRunlarkBoardWebRequest(
         path,
       );
     if (taskMatch) {
-      const taskId = decodeURIComponent(taskMatch[1]);
+      const taskId = decodeSafeSegment(taskMatch[1], "task_id");
       const action = taskMatch[2] as
         | "move"
         | "clarify"
@@ -130,7 +160,7 @@ export async function handleRunlarkBoardWebRequest(
 
     const runActionMatch = /^\/api\/runlark\/runs\/([^/]+)\/(diff|history|verify)$/u.exec(path);
     if (runActionMatch) {
-      const runId = decodeURIComponent(runActionMatch[1]);
+      const runId = decodeSafeSegment(runActionMatch[1], "run_id");
       const action = runActionMatch[2];
       if (method === "GET" && action === "diff") {
         sendJson(res, 200, await boardClient.getRunDiff(runId, signal));
@@ -145,6 +175,42 @@ export async function handleRunlarkBoardWebRequest(
         sendJson(res, 200, await boardClient.verifyRun(runId, body, signal));
         return true;
       }
+    }
+
+    const artifactMatch = /^\/api\/runlark\/artifacts\/([^/]+)$/u.exec(path);
+    if (method === "GET" && artifactMatch) {
+      const digest = decodeSafeSegment(artifactMatch[1], "digest");
+      if (!SHA256_HEX_RE.test(digest)) {
+        sendJson(res, 400, {
+          error: "invalid_digest",
+          message: "Artifact digest must be 64 lowercase hexadecimal characters",
+        });
+        return true;
+      }
+      const meta = url.searchParams.get("meta") === "true";
+      const result = await boardClient.getArtifact(digest, meta, signal);
+      if (!meta) {
+        const actualDigest = createHash("sha256").update(result.body).digest("hex");
+        if (actualDigest !== digest) {
+          sendJson(res, 500, {
+            error: "corrupt_artifact",
+            message: `Artifact SHA-256 mismatch: expected ${digest}, got ${actualDigest}`,
+          });
+          return true;
+        }
+      }
+      res.writeHead(200, {
+        "Content-Type": result.contentType,
+        "X-Content-Type-Options": "nosniff",
+        ...(meta
+          ? {}
+          : {
+              "X-Runlark-Sha256-Verified": "true",
+              "Content-Security-Policy": "default-src 'none'; sandbox",
+            }),
+      });
+      res.end(result.body);
+      return true;
     }
 
     if (method === "GET" && path === "/api/runlark/plugins") {
@@ -183,6 +249,13 @@ export async function handleRunlarkBoardWebRequest(
     return false;
   } catch (error) {
     if (signal.aborted || res.writableEnded) {
+      return true;
+    }
+    if (error instanceof InvalidPathSegmentError) {
+      sendJson(res, 400, {
+        error: error.code,
+        message: error.message,
+      });
       return true;
     }
     if (error instanceof URIError) {
@@ -239,7 +312,7 @@ async function handleTeamWebRequest(
     path,
   );
   if (wsMatch) {
-    const wid = decodeURIComponent(wsMatch[1]);
+    const wid = decodeSafeSegment(wsMatch[1], "workspace_id");
     const sub = wsMatch[2];
     if (method === "GET" && !sub) {
       sendJson(res, 200, await boardClient.getWorkspace(wid, signal));
@@ -247,6 +320,10 @@ async function handleTeamWebRequest(
     }
     if (method === "GET" && sub === "members") {
       sendJson(res, 200, await boardClient.listWorkspaceMembers(wid, signal));
+      return true;
+    }
+    if (method === "GET" && sub === "invitations") {
+      sendJson(res, 200, await boardClient.listInvitations(wid, signal));
       return true;
     }
     if (method === "POST" && sub === "invitations") {
@@ -263,8 +340,8 @@ async function handleTeamWebRequest(
       res,
       200,
       await boardClient.updateWorkspaceMemberRole(
-        decodeURIComponent(memberPatchMatch[1]),
-        decodeURIComponent(memberPatchMatch[2]),
+        decodeSafeSegment(memberPatchMatch[1], "workspace_id"),
+        decodeSafeSegment(memberPatchMatch[2], "user_id"),
         await readJsonBody(req),
         signal,
       ),
@@ -279,8 +356,8 @@ async function handleTeamWebRequest(
       res,
       200,
       await boardClient.revokeInvitation(
-        decodeURIComponent(revokeMatch[1]),
-        decodeURIComponent(revokeMatch[2]),
+        decodeSafeSegment(revokeMatch[1], "workspace_id"),
+        decodeSafeSegment(revokeMatch[2], "invite_id"),
         signal,
       ),
     );
@@ -302,7 +379,7 @@ async function handleTeamWebRequest(
       res,
       200,
       await boardClient.retryDraft(
-        decodeURIComponent(draftRetryMatch[1]),
+        decodeSafeSegment(draftRetryMatch[1], "draft_id"),
         await readJsonBody(req),
         signal,
       ),
@@ -312,7 +389,7 @@ async function handleTeamWebRequest(
   const draftDeleteMatch = /^\/api\/runlark\/team\/drafts\/([^/]+)$/u.exec(path);
   if (method === "DELETE" && draftDeleteMatch) {
     const { status } = await boardClient.deleteDraft(
-      decodeURIComponent(draftDeleteMatch[1]),
+      decodeSafeSegment(draftDeleteMatch[1], "draft_id"),
       signal,
     );
     res.writeHead(status);
@@ -338,7 +415,7 @@ async function handleTeamWebRequest(
     path,
   );
   if (method === "POST" && runActionMatch) {
-    const runId = decodeURIComponent(runActionMatch[1]);
+    const runId = decodeSafeSegment(runActionMatch[1], "run_id");
     const body = await readJsonBody(req);
     const result =
       runActionMatch[2] === "assign"
