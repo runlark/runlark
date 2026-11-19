@@ -26,17 +26,19 @@ impl CommentStore {
         })
     }
 
-    /// Inserts an immutable append-only [`TaskComment`], ignoring duplicate `comment_id` replays.
+    /// Inserts an immutable append-only [`TaskComment`], ignoring identical duplicate `comment_id`
+    /// replays and rejecting conflicting content for an existing `comment_id`.
     ///
     /// # Errors
-    /// Returns [`StorageError`] if comment body is empty or SQL execution fails.
+    /// Returns [`StorageError::InvalidState`] if comment body is empty or `comment_id` already
+    /// exists with a different task, run, or body, or [`StorageError`] if SQL execution fails.
     pub fn upsert_comment(conn: &Connection, comment: &TaskComment) -> Result<(), StorageError> {
         if comment.body.trim().is_empty() {
             return Err(StorageError::InvalidState(
                 "comment body must not be empty".to_string(),
             ));
         }
-        conn.execute(
+        let inserted = conn.execute(
             concat!(
                 "INSERT OR IGNORE INTO task_comments ",
                 "(comment_id, task_id, run_id, author_user_id, author_display_name, body, created_at) ",
@@ -52,6 +54,17 @@ impl CommentStore {
                 to_sql_i64(comment.created_at.0)?,
             ],
         )?;
+        if inserted == 0
+            && let Some(existing) = Self::get_comment(conn, &comment.id)?
+            && (existing.task_id != comment.task_id
+                || existing.run_id != comment.run_id
+                || existing.body != comment.body)
+        {
+            return Err(StorageError::InvalidState(format!(
+                "comment {} already exists with conflicting content",
+                comment.id
+            )));
+        }
         Ok(())
     }
 

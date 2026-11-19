@@ -236,6 +236,13 @@ fn prepare_retry_outbox(
             )
         })?;
     drop(conn);
+    if matches!(draft.sync_state, DraftSyncState::Synced) {
+        return Err(api_error(
+            StatusCode::CONFLICT,
+            "draft_already_synced",
+            format!("Offline draft {draft_id} is already synced and cannot be retried"),
+        ));
+    }
     if draft.kind == DraftKind::DecisionIntent {
         return Err(api_error(
             StatusCode::BAD_REQUEST,

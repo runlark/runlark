@@ -1,4 +1,6 @@
-use crate::routes::error::{ApiError, api_error, storage_error_to_http, team_server_error_to_http};
+use crate::routes::error::{
+    ApiError, api_error, deterministic_id, storage_error_to_http, team_server_error_to_http,
+};
 use crate::routes::team_gate;
 use crate::state::AppState;
 use crate::team_sync::{TeamServerError, TeamSyncWorker};
@@ -80,15 +82,18 @@ pub async fn add_task_comment(
     }
     let task_id = TaskId::from(id);
     let now = Timestamp(AppState::current_timestamp_ms());
-    let command_id = CommandId::from(
-        req.command_id
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| format!("cmd_cmt_{}", Uuid::new_v4().simple())),
-    );
+    let explicit_cmd_id = req.command_id.as_deref().filter(|s| !s.trim().is_empty());
+    let command_id = CommandId::from(explicit_cmd_id.map_or_else(
+        || format!("cmd_cmt_{}", Uuid::new_v4().simple()),
+        str::to_string,
+    ));
     let comment_id = CommentId::from(
         req.comment_id
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| format!("cmt_{}", Uuid::new_v4().simple())),
+            .unwrap_or_else(|| match explicit_cmd_id {
+                Some(cid) => deterministic_id("cmt", cid),
+                None => format!("cmt_{}", Uuid::new_v4().simple()),
+            }),
     );
     let run_id = req.run_id.filter(|s| !s.trim().is_empty()).map(RunId::from);
 
@@ -178,30 +183,32 @@ async fn submit_or_queue_team_comment(
         .await
     {
         Ok(_) => {
-            let conn = state.get_connection().map_err(|e| {
-                api_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "storage_error",
-                    e.to_string(),
-                )
-            })?;
-            let comment = CommentStore::get_comment(&conn, &params.comment_id)
-                .map_err(storage_error_to_http)?
-                .ok_or_else(|| {
-                    api_error(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "storage_error",
-                        "comment missing after sync",
-                    )
-                })?;
+            let comment = state
+                .get_connection()
+                .ok()
+                .and_then(|conn| {
+                    CommentStore::get_comment(&conn, &params.comment_id)
+                        .ok()
+                        .flatten()
+                })
+                .unwrap_or_else(|| TaskComment {
+                    id: params.comment_id,
+                    task_id: params.task_id,
+                    run_id: params.run_id,
+                    author_user_id: UserId::from("team"),
+                    author_display_name: ctx.display_name.clone(),
+                    body: params.body,
+                    created_at: now,
+                });
             Ok((
                 StatusCode::CREATED,
                 Json(AddCommentResponse::Synced { comment }),
             ))
         }
         Err(TeamServerError::Offline(_)) => {
+            let draft_id = DraftId::from(deterministic_id("draft_cmt", cmd.command_id().as_ref()));
             let draft = OfflineDraft {
-                id: DraftId::from(format!("draft_cmt_{}", Uuid::new_v4().simple())),
+                id: draft_id,
                 project_id: params.project_id,
                 task_id: Some(params.task_id),
                 kind: DraftKind::TaskComment,
@@ -232,15 +239,25 @@ async fn submit_or_queue_team_comment(
                     e.to_string(),
                 )
             })?;
-            with_immediate_tx::<_, runlark_local::StorageError, _>(&mut conn, |tx| {
-                DraftStore::save_draft(tx, &draft)?;
-                SyncOutboxStore::enqueue(tx, &outbox)?;
-                Ok(())
-            })
-            .map_err(storage_error_to_http)?;
+            let saved_draft =
+                with_immediate_tx::<_, runlark_local::StorageError, _>(&mut conn, |tx| {
+                    if let Some(existing_outbox) = SyncOutboxStore::get(tx, &outbox.command_id)? {
+                        SyncOutboxStore::enqueue(tx, &outbox)?;
+                        if let Some(ref existing_did) = existing_outbox.draft_id
+                            && let Some(existing_draft) = DraftStore::get_draft(tx, existing_did)?
+                        {
+                            return Ok(existing_draft);
+                        }
+                        return Ok(draft.clone());
+                    }
+                    DraftStore::save_draft(tx, &draft)?;
+                    SyncOutboxStore::enqueue(tx, &outbox)?;
+                    Ok(draft.clone())
+                })
+                .map_err(storage_error_to_http)?;
             Ok((
                 StatusCode::ACCEPTED,
-                Json(AddCommentResponse::QueuedOffline { draft }),
+                Json(AddCommentResponse::QueuedOffline { draft: saved_draft }),
             ))
         }
         Err(err) => Err(team_server_error_to_http(err)),

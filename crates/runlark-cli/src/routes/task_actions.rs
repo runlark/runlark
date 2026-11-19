@@ -392,10 +392,11 @@ pub async fn create_task_pr(
 ) -> Result<(StatusCode, Json<CreatePrOutcome>), ApiError> {
     let req = body.map(|b| b.0).unwrap_or_default();
     let task_id = TaskId::from(id);
-    if let Some((_, ctx)) = team_gate::resolve_task_team_context(&state, &task_id)? {
-        team_gate::verify_server_reachable_and_synced(&state, &ctx).await?;
+    let task_team_ctx = team_gate::resolve_task_team_context(&state, &task_id)?;
+    if let Some((_, ref ctx)) = task_team_ctx {
+        team_gate::verify_server_reachable_and_synced(&state, ctx).await?;
     }
-    let run_id = {
+    let (run_id, resolved_run) = {
         let conn = state.get_connection().map_err(|e| {
             api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -412,7 +413,8 @@ pub async fn create_task_pr(
                     format!("Task not found: {task_id}"),
                 )
             })?;
-        req.run_id
+        let rid = req
+            .run_id
             .filter(|s| !s.trim().is_empty())
             .map(RunId::from)
             .or(task.latest_run_id)
@@ -423,8 +425,25 @@ pub async fn create_task_pr(
                     "missing_run",
                     "task has no run to publish PR for",
                 )
-            })?
+            })?;
+        let run = SessionStore::get_run(&conn, &rid).map_err(storage_error_to_http)?;
+        if let Some(ref r) = run
+            && r.task_id.as_ref() != Some(&task_id)
+        {
+            return Err(api_error(
+                StatusCode::CONFLICT,
+                "run_task_mismatch",
+                format!("Run {rid} does not belong to task {task_id}"),
+            ));
+        }
+        (rid, run)
     };
+    if task_team_ctx.is_none()
+        && let Some(ref run) = resolved_run
+        && let Some(ctx) = team_gate::resolve_run_team_context(&state, run)?
+    {
+        team_gate::verify_server_reachable_and_synced(&state, &ctx).await?;
+    }
 
     let pr_req = CreatePrRequest {
         command_id: CommandId::from(

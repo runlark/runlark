@@ -149,34 +149,67 @@ pub fn resolve_session_command_team_context(
     })?;
     let session =
         SessionStore::get_session(&conn, command.session_id()).map_err(storage_error_to_http)?;
-    let run = match SessionStore::get_run(&conn, command.run_id()).map_err(storage_error_to_http)? {
-        Some(r) => Some(r),
-        None => match session.as_ref().and_then(|s| s.active_run_id.as_ref()) {
-            Some(aid) => SessionStore::get_run(&conn, aid).map_err(storage_error_to_http)?,
-            None => None,
-        },
-    };
-    let task_id = run
-        .as_ref()
-        .and_then(|r| r.task_id.clone())
-        .or_else(|| session.as_ref().map(|s| s.task_id.clone()));
-    let task = match task_id {
-        Some(ref tid) => TaskStore::get_task(&conn, tid).map_err(storage_error_to_http)?,
+    let cmd_run = SessionStore::get_run(&conn, command.run_id()).map_err(storage_error_to_http)?;
+    if let Some(ref r) = cmd_run
+        && r.session_id != *command.session_id()
+    {
+        return Err(api_error(
+            StatusCode::CONFLICT,
+            "run_session_mismatch",
+            format!(
+                "Run {} belongs to session {}, not {}",
+                r.id,
+                r.session_id,
+                command.session_id()
+            ),
+        ));
+    }
+    let session_active_run = match session.as_ref().and_then(|s| s.active_run_id.as_ref()) {
+        Some(aid) => SessionStore::get_run(&conn, aid).map_err(storage_error_to_http)?,
         None => None,
+    };
+    let run = cmd_run.or(session_active_run.clone());
+    let run_task = match run.as_ref().and_then(|r| r.task_id.as_ref()) {
+        Some(tid) => TaskStore::get_task(&conn, tid).map_err(storage_error_to_http)?,
+        None => None,
+    };
+    let session_task = match session.as_ref() {
+        Some(s) if !s.task_id.0.trim().is_empty() => {
+            TaskStore::get_task(&conn, &s.task_id).map_err(storage_error_to_http)?
+        }
+        _ => None,
     };
     drop(conn);
 
-    let project_id = run
+    let mut candidate_projects = Vec::new();
+    if let Some(pid) = run.as_ref().and_then(|r| r.project_id.clone()) {
+        candidate_projects.push(pid);
+    }
+    if let Some(pid) = run_task.as_ref().map(|t| t.project_id.clone())
+        && !candidate_projects.contains(&pid)
+    {
+        candidate_projects.push(pid);
+    }
+    if let Some(pid) = session_active_run
         .as_ref()
         .and_then(|r| r.project_id.clone())
-        .or_else(|| task.as_ref().map(|t| t.project_id.clone()));
-    let Some(pid) = project_id else {
-        return Ok(None);
-    };
-    let Some(context) = resolve_project_team_context(state, &pid)? else {
-        return Ok(None);
-    };
-    Ok(Some(SessionCommandTeamContext { run, task, context }))
+        && !candidate_projects.contains(&pid)
+    {
+        candidate_projects.push(pid);
+    }
+    if let Some(pid) = session_task.as_ref().map(|t| t.project_id.clone())
+        && !candidate_projects.contains(&pid)
+    {
+        candidate_projects.push(pid);
+    }
+
+    let task = run_task.or(session_task);
+    for pid in candidate_projects {
+        if let Some(context) = resolve_project_team_context(state, &pid)? {
+            return Ok(Some(SessionCommandTeamContext { run, task, context }));
+        }
+    }
+    Ok(None)
 }
 
 /// Submits an authoritative [`TeamCommand`] to the collaboration server and syncs the resulting

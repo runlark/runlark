@@ -100,7 +100,7 @@ pub(crate) async fn submit_team_session_command(
                 &RunId::from(res.aggregate_id),
                 res.revision,
                 res.idempotent_replay,
-            )?))
+            )))
         }
         SessionCommand::SendPrompt(send_cmd)
             if team
@@ -143,7 +143,7 @@ pub(crate) async fn submit_team_session_command(
                 &RunId::from(res.aggregate_id),
                 res.revision,
                 res.idempotent_replay,
-            )?))
+            )))
         }
         SessionCommand::SendPrompt(_)
         | SessionCommand::ResumeSession(_)
@@ -197,21 +197,17 @@ fn build_team_command_response(
     run_id: &RunId,
     revision: u64,
     idempotent_replay: bool,
-) -> Result<(StatusCode, Json<SubmitCommandResponse>), ApiError> {
-    let conn = state.get_connection().map_err(|e| {
-        api_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "storage_error",
-            e.to_string(),
-        )
-    })?;
-    let run = SessionStore::get_run(&conn, run_id).map_err(storage_error_to_http)?;
+) -> (StatusCode, Json<SubmitCommandResponse>) {
+    let run = state
+        .get_connection()
+        .ok()
+        .and_then(|conn| SessionStore::get_run(&conn, run_id).ok().flatten());
     let status_code = if idempotent_replay {
         StatusCode::OK
     } else {
         StatusCode::CREATED
     };
-    Ok((
+    (
         status_code,
         Json(SubmitCommandResponse {
             command_id: command_id.to_string(),
@@ -224,7 +220,7 @@ fn build_team_command_response(
             run_id: Some(run_id.0.clone()),
             run_status: run.as_ref().map(|r| run_status_str(r.status).to_string()),
         }),
-    ))
+    )
 }
 
 fn apply_local_session_command(

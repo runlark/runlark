@@ -27,6 +27,10 @@ impl SyncStore {
     ) -> Result<(), StorageError> {
         let clean_url = server_url.trim_end_matches('/');
         with_immediate_tx(conn, |tx| {
+            let existing_cursor = Self::get_workspace_cursor(tx, &snapshot.workspace.id)?;
+            if snapshot.cursor_seq.0 < existing_cursor.0 {
+                return Ok(());
+            }
             Self::upsert_workspace_metadata(
                 tx,
                 clean_url,

@@ -297,7 +297,7 @@ async fn report_fenced_step(
     step: FencedStep<'_>,
 ) -> Result<bool, PipelineError> {
     let worker = RunnerAgentWorker::new(state.clone());
-    worker
+    match worker
         .report_or_buffer_run_state(RunnerStateInput {
             workspace_id: &lease.workspace_id,
             run_id: step.run_id,
@@ -311,10 +311,19 @@ async fn report_fenced_step(
             payload_json: step.payload_json,
         })
         .await
-        .map_err(|err| match err {
-            TeamServerError::Storage(s) => PipelineError::Storage(s),
-            other => PipelineError::TeamFencing(other.to_string()),
-        })
+    {
+        Ok(flushed) => Ok(flushed),
+        Err(TeamServerError::Unauthorized(msg)) => {
+            tracing::warn!(
+                run_id = %step.run_id,
+                event_type = step.event_type,
+                "Team auth expired during runner step report; preserved in runner buffer: {msg}"
+            );
+            Ok(false)
+        }
+        Err(TeamServerError::Storage(s)) => Err(PipelineError::Storage(s)),
+        Err(other) => Err(PipelineError::TeamFencing(other.to_string())),
+    }
 }
 
 async fn sync_or_queue_evidence_artifacts(
@@ -347,6 +356,7 @@ async fn sync_or_queue_evidence_artifacts(
             label,
             created_at: now,
         });
+        queue_outbox_command(state, &lease.workspace_id, &attach_cmd, None, now)?;
         let bytes = cas.get_bytes(&digest)?;
         match sync
             .upload_artifact(
@@ -364,9 +374,7 @@ async fn sync_or_queue_evidence_artifacts(
                 drop(conn);
                 submit_or_queue_team_command(state, lease, &attach_cmd, None, now).await?;
             }
-            Err(TeamServerError::Offline(_)) => {
-                queue_outbox_command(state, &lease.workspace_id, &attach_cmd, None, now)?;
-            }
+            Err(TeamServerError::Offline(_) | TeamServerError::Unauthorized(_)) => {}
             Err(err) => return Err(map_team_error(err)),
         }
     }
@@ -408,6 +416,7 @@ async fn submit_or_queue_team_command(
     expected_revision: Option<Revision>,
     now: Timestamp,
 ) -> Result<(), PipelineError> {
+    queue_outbox_command(state, &lease.workspace_id, cmd, expected_revision, now)?;
     let sync = TeamSyncWorker::new(state.clone());
     match sync
         .submit_command_and_sync(
@@ -418,11 +427,42 @@ async fn submit_or_queue_team_command(
         )
         .await
     {
-        Ok(_) => Ok(()),
-        Err(TeamServerError::Offline(_)) => {
-            queue_outbox_command(state, &lease.workspace_id, cmd, expected_revision, now)
+        Ok(_) => {
+            if let Ok(mut conn) = open_sqlite(&state.db_path) {
+                let _ = SyncOutboxStore::mark_acked(&mut conn, cmd.command_id(), now);
+            }
+            Ok(())
         }
-        Err(err) => Err(map_team_error(err)),
+        Err(TeamServerError::Offline(_) | TeamServerError::Unauthorized(_)) => Ok(()),
+        Err(TeamServerError::Conflict {
+            code,
+            message,
+            current_revision,
+        }) => {
+            if let Ok(mut conn) = open_sqlite(&state.db_path) {
+                let _ = SyncOutboxStore::mark_conflict(
+                    &mut conn,
+                    cmd.command_id(),
+                    current_revision.map(Revision),
+                    &message,
+                    now,
+                );
+            }
+            Err(PipelineError::TeamFencing(format!(
+                "Conflict ({code}): {message}"
+            )))
+        }
+        Err(err) => {
+            if let Ok(mut conn) = open_sqlite(&state.db_path) {
+                let _ = SyncOutboxStore::mark_failed(
+                    &mut conn,
+                    cmd.command_id(),
+                    &err.to_string(),
+                    now,
+                );
+            }
+            Err(map_team_error(err))
+        }
     }
 }
 

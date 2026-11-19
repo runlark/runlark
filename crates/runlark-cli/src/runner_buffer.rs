@@ -1,14 +1,82 @@
 use crate::team_sync::TeamServerError;
 use crate::worktree::WorktreeManager;
 use runlark_domain::{
-    EventSeq, Run, RunId, RunOwnership, RunnerEventInput, RunnerRunReport, Timestamp,
+    EventSeq, LeaseEpoch, ProjectOwnershipMode, Run, RunId, RunOwnership, RunStatus,
+    RunnerEventInput, RunnerId, RunnerRegistration, RunnerRunReport, Timestamp, WorkflowStage,
+    WorkspaceId,
 };
 use runlark_local::{
-    BufferedRunnerReport, ProjectStore, RunnerBufferStore, SessionStore, StorageError, open_sqlite,
-    with_immediate_tx,
+    BufferedRunnerReport, ProjectStore, RunnerBufferStore, SessionStore, StorageError, SyncStore,
+    TeamAuthStore, open_sqlite, with_immediate_tx,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+
+/// Server response returned by `POST /runs/{run_id}/assign` and `POST /runs/{run_id}/runner-state`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunOwnershipResponse {
+    pub run: Run,
+    pub ownership: RunOwnership,
+}
+
+/// Input payload for [`crate::runner_agent::RunnerAgentWorker::report_or_buffer_run_state`].
+#[derive(Debug, Clone)]
+pub struct RunnerStateInput<'a> {
+    pub workspace_id: &'a WorkspaceId,
+    pub run_id: &'a RunId,
+    pub runner_id: &'a RunnerId,
+    pub lease_epoch: LeaseEpoch,
+    pub status: Option<RunStatus>,
+    pub workflow_stage: Option<WorkflowStage>,
+    pub head_sha: Option<String>,
+    pub base_sha: Option<String>,
+    pub event_type: &'a str,
+    pub payload_json: &'a str,
+}
+
+/// Summary counters returned by a single [`crate::runner_agent::RunnerAgentWorker::tick_once`] pass.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunnerTickSummary {
+    pub heartbeats_sent: usize,
+    pub buffered_events_flushed: usize,
+    pub assigned_runs_prepared: usize,
+    pub fencing_conflicts: usize,
+}
+
+pub(crate) fn load_assigned_executable_runs(
+    db_path: &Path,
+    workspace_id: &WorkspaceId,
+    runner_id: &RunnerId,
+) -> Result<Vec<(Run, RunOwnership)>, StorageError> {
+    let conn = open_sqlite(db_path)?;
+    let mut owned = Vec::new();
+    for binding in SyncStore::list_project_bindings(&conn)? {
+        let matches_ws = matches!(
+            &binding.ownership_mode,
+            ProjectOwnershipMode::TeamManaged {
+                workspace_id: wid, ..
+            } if wid == workspace_id
+        );
+        if !matches_ws {
+            continue;
+        }
+        let ownerships = SyncStore::list_run_ownerships_for_project(&conn, &binding.project_id)?;
+        for run in ProjectStore::list_runs_for_project(&conn, &binding.project_id)? {
+            if run.status.is_terminal() {
+                continue;
+            }
+            if let Some(own) = ownerships.get(&run.id)
+                && own.assigned_runner_id.as_ref() == Some(runner_id)
+                && own.lease_epoch.0 > 0
+                && !own.runner_unreachable
+            {
+                owned.push((run, own.clone()));
+            }
+        }
+    }
+    Ok(owned)
+}
 
 #[derive(Default)]
 pub(crate) struct RunFlushOutcome {
@@ -23,6 +91,36 @@ pub(crate) struct ReportChunk {
     pub max_seq: EventSeq,
 }
 
+pub(crate) fn is_fencing_conflict_code(code: &str) -> bool {
+    matches!(code, "runner_fencing_mismatch" | "runner_unreachable")
+}
+
+pub(crate) fn persist_runner_registration(
+    db_path: &Path,
+    server_url: &str,
+    reg: &RunnerRegistration,
+    update_auth_identity: bool,
+    now: Timestamp,
+) -> Result<(), StorageError> {
+    let mut conn = open_sqlite(db_path)?;
+    with_immediate_tx::<_, StorageError, _>(&mut conn, |tx| {
+        SyncStore::ensure_workspace_placeholder(tx, server_url, &reg.workspace_id, now)?;
+        SyncStore::upsert_runner(tx, reg)?;
+        if update_auth_identity {
+            TeamAuthStore::set_runner_identity(
+                tx,
+                server_url,
+                &reg.owner_user_id,
+                &reg.workspace_id,
+                &reg.id,
+                &reg.name,
+                now,
+            )?;
+        }
+        Ok(())
+    })
+}
+
 pub(crate) fn commit_flushed_chunk(
     db_path: &Path,
     run_id: &RunId,
@@ -32,7 +130,11 @@ pub(crate) fn commit_flushed_chunk(
 ) -> Result<(), StorageError> {
     let mut conn = open_sqlite(db_path)?;
     with_immediate_tx::<_, StorageError, _>(&mut conn, |tx| {
-        SessionStore::save_run(tx, server_run)?;
+        let should_save = SessionStore::get_run(tx, run_id)?
+            .is_none_or(|local| server_run.revision >= local.revision);
+        if should_save {
+            SessionStore::save_run(tx, server_run)?;
+        }
         RunnerBufferStore::mark_flushed_range(tx, run_id, chunk.min_seq, chunk.max_seq)?;
         Ok(())
     })?;

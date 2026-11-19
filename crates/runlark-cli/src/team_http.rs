@@ -2,12 +2,13 @@ use crate::state::AppState;
 use crate::team_sync::{TeamCommandSubmissionResult, TeamSyncWorker};
 use reqwest::{Client, StatusCode};
 use runlark_domain::{
-    ArtifactDigest, ArtifactRef, CursorSeq, ProjectOwnershipMode, TeamCommand, Timestamp,
-    WorkspaceEventEnvelope, WorkspaceId, WorkspaceSnapshot,
+    ArtifactDigest, ArtifactRef, CommandId, CursorSeq, DraftId, ProjectId, ProjectOwnershipMode,
+    Revision, RunId, TeamCommand, Timestamp, WorkspaceEventEnvelope, WorkspaceId,
+    WorkspaceSnapshot,
 };
 use runlark_local::{
-    ArtifactCasStore, ProjectStore, StorageError, SyncStore, SyncedCasStore, open_sqlite,
-    sha256_hex,
+    ArtifactCasStore, ProjectStore, StorageError, SyncOutboxEntry, SyncOutboxStatus, SyncStore,
+    SyncedCasStore, open_sqlite, sha256_hex,
 };
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -107,6 +108,28 @@ pub(crate) async fn map_error_response(resp: reqwest::Response) -> TeamServerErr
     }
 }
 
+/// Validates a single URL path segment for outbound `runlark-server` HTTP requests.
+///
+/// # Errors
+/// Returns [`TeamServerError::BadRequest`] if `value` is empty, `.`/`..`, or contains `/`, `\`,
+/// `?`, `#`, `%`, whitespace, or control characters.
+pub(crate) fn validate_team_path_segment<'a>(
+    value: &'a str,
+    label: &str,
+) -> Result<&'a str, TeamServerError> {
+    if value.is_empty()
+        || value == "."
+        || value == ".."
+        || value.contains(['/', '\\', '?', '#', '%'])
+        || value.chars().any(|c| c.is_whitespace() || c.is_control())
+    {
+        return Err(TeamServerError::BadRequest(format!(
+            "invalid {label} path segment"
+        )));
+    }
+    Ok(value)
+}
+
 /// Submits a [`TeamCommand`] to `POST /api/v1/workspaces/{wid}/commands`.
 ///
 /// # Errors
@@ -118,10 +141,10 @@ pub async fn post_team_command(
     workspace_id: &WorkspaceId,
     command: &TeamCommand,
 ) -> Result<TeamCommandSubmissionResult, TeamServerError> {
+    let wid = validate_team_path_segment(workspace_id.as_ref(), "workspace_id")?;
     let url = format!(
-        "{}/api/v1/workspaces/{}/commands",
-        server_url.trim_end_matches('/'),
-        workspace_id.as_ref()
+        "{}/api/v1/workspaces/{wid}/commands",
+        server_url.trim_end_matches('/')
     );
     let resp = http
         .post(&url)
@@ -143,10 +166,10 @@ pub async fn fetch_snapshot(
     bearer_token: &str,
     workspace_id: &WorkspaceId,
 ) -> Result<WorkspaceSnapshot, TeamServerError> {
+    let wid = validate_team_path_segment(workspace_id.as_ref(), "workspace_id")?;
     let url = format!(
-        "{}/api/v1/workspaces/{}/sync/snapshot",
-        server_url.trim_end_matches('/'),
-        workspace_id.as_ref()
+        "{}/api/v1/workspaces/{wid}/sync/snapshot",
+        server_url.trim_end_matches('/')
     );
     let resp = http
         .get(&url)
@@ -169,10 +192,10 @@ pub async fn fetch_events(
     after_cursor: CursorSeq,
     limit: u32,
 ) -> Result<Vec<WorkspaceEventEnvelope>, TeamServerError> {
+    let wid = validate_team_path_segment(workspace_id.as_ref(), "workspace_id")?;
     let url = format!(
-        "{}/api/v1/workspaces/{}/sync/events?after_cursor={}&limit={limit}",
+        "{}/api/v1/workspaces/{wid}/sync/events?after_cursor={}&limit={limit}",
         server_url.trim_end_matches('/'),
-        workspace_id.as_ref(),
         after_cursor.0
     );
     let resp = http
@@ -196,14 +219,14 @@ pub async fn upload_artifact(
     meta: &ArtifactRef,
     bytes: &[u8],
 ) -> Result<ArtifactRef, TeamServerError> {
+    let wid = validate_team_path_segment(workspace_id.as_ref(), "workspace_id")?;
     let kind_str = serde_json::to_value(meta.kind)?
         .as_str()
         .unwrap_or("evidence_bundle")
         .to_string();
     let url = format!(
-        "{}/api/v1/workspaces/{}/artifacts/{}",
+        "{}/api/v1/workspaces/{wid}/artifacts/{}",
         server_url.trim_end_matches('/'),
-        workspace_id.as_ref(),
         meta.digest_sha256.as_str()
     );
     let resp = http
@@ -232,10 +255,10 @@ pub async fn download_artifact(
     workspace_id: &WorkspaceId,
     digest: &ArtifactDigest,
 ) -> Result<Vec<u8>, TeamServerError> {
+    let wid = validate_team_path_segment(workspace_id.as_ref(), "workspace_id")?;
     let url = format!(
-        "{}/api/v1/workspaces/{}/artifacts/{}",
+        "{}/api/v1/workspaces/{wid}/artifacts/{}",
         server_url.trim_end_matches('/'),
-        workspace_id.as_ref(),
         digest.as_str()
     );
     let resp = http
@@ -272,7 +295,7 @@ impl TeamSyncWorker {
     ) -> Result<usize, TeamServerError> {
         let cas = self.state.cas_store();
         let CasTransferPlan { to_upload, .. } =
-            plan_cas_transfers(&self.state, workspace_id, &cas)?;
+            plan_cas_transfers(&self.state, workspace_id, &cas, true)?;
         let mut uploaded = 0_usize;
         for (meta, bytes) in to_upload {
             upload_artifact(
@@ -304,7 +327,7 @@ impl TeamSyncWorker {
     ) -> Result<usize, TeamServerError> {
         let cas = self.state.cas_store();
         let CasTransferPlan { to_download, .. } =
-            plan_cas_transfers(&self.state, workspace_id, &cas)?;
+            plan_cas_transfers(&self.state, workspace_id, &cas, false)?;
         let mut downloaded = 0_usize;
         for meta in to_download {
             match download_artifact(
@@ -333,6 +356,59 @@ impl TeamSyncWorker {
         }
         Ok(downloaded)
     }
+
+    /// Derives a deterministic `CommandId` for `AttachArtifact` so retries are idempotent.
+    #[must_use]
+    pub fn deterministic_attach_command_id(
+        run_id: &RunId,
+        digest: &ArtifactDigest,
+        label: &str,
+    ) -> CommandId {
+        let key = format!("{}\0{}\0{}", run_id.as_ref(), digest.as_str(), label);
+        let hash = sha256_hex(key.as_bytes());
+        CommandId::from(format!("cmd_att_{}", &hash[..24]))
+    }
+
+    /// Builds a [`SyncOutboxEntry`] from a [`TeamCommand`].
+    ///
+    /// # Errors
+    /// Returns [`TeamServerError::Json`] if serialization fails.
+    pub fn build_outbox_entry(
+        workspace_id: &WorkspaceId,
+        project_id: Option<&ProjectId>,
+        draft_id: Option<&DraftId>,
+        command: &TeamCommand,
+        expected_revision: Option<Revision>,
+        now: Timestamp,
+    ) -> Result<SyncOutboxEntry, TeamServerError> {
+        let command_type = match command {
+            TeamCommand::CreateTask(_) => "create_task",
+            TeamCommand::MoveTaskStage(_) => "move_task_stage",
+            TeamCommand::UpdateTaskPlan(_) => "update_task_plan",
+            TeamCommand::CreateTeamRun(_) => "create_team_run",
+            TeamCommand::AssignRunner(_) => "assign_runner",
+            TeamCommand::CancelRun(_) => "cancel_run",
+            TeamCommand::ForceCancelUnreachableRun(_) => "force_cancel_unreachable_run",
+            TeamCommand::AddComment(_) => "add_comment",
+            TeamCommand::RecordAttempt(_) => "record_attempt",
+            TeamCommand::RecordDecision(_) => "record_decision",
+            TeamCommand::AttachArtifact(_) => "attach_artifact",
+        };
+        Ok(SyncOutboxEntry {
+            command_id: command.command_id().clone(),
+            workspace_id: workspace_id.clone(),
+            project_id: project_id.cloned(),
+            draft_id: draft_id.cloned(),
+            command_type: command_type.to_string(),
+            payload_json: serde_json::to_string(command)?,
+            expected_revision,
+            status: SyncOutboxStatus::Pending,
+            last_error: None,
+            conflict_server_revision: None,
+            created_at: now,
+            updated_at: now,
+        })
+    }
 }
 
 struct CasTransferPlan {
@@ -344,6 +420,7 @@ fn plan_cas_transfers(
     state: &AppState,
     workspace_id: &WorkspaceId,
     cas: &ArtifactCasStore,
+    load_uploads: bool,
 ) -> Result<CasTransferPlan, TeamServerError> {
     let conn = open_sqlite(&state.db_path)?;
     let mut to_upload = Vec::new();
@@ -366,7 +443,9 @@ fn plan_cas_transfers(
                     continue;
                 }
                 if cas.has_blob(&meta.digest_sha256) {
-                    if !SyncedCasStore::is_uploaded(&conn, workspace_id, &meta.digest_sha256)? {
+                    if load_uploads
+                        && !SyncedCasStore::is_uploaded(&conn, workspace_id, &meta.digest_sha256)?
+                    {
                         let bytes = cas.get_bytes(&meta.digest_sha256)?;
                         to_upload.push((meta, bytes));
                     }

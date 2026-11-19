@@ -137,12 +137,13 @@ pub(crate) async fn authenticate_dsh_cookie(
     let Some(token) = token.filter(|t| !t.trim().is_empty()) else {
         return Ok(None);
     };
-    let connect_url = format!("{origin}/connect?token={token}&interactions=none");
+    let connect_url = format!("{origin}/connect");
     let resp = http
         .get(&connect_url)
+        .query(&[("token", token), ("interactions", "none")])
         .send()
         .await
-        .map_err(|e| format!("DSH /connect request failed: {e}"))?;
+        .map_err(|e| format!("DSH /connect request failed: {}", e.without_url()))?;
 
     if !resp.status().is_redirection() && !resp.status().is_success() {
         return Err(format!("DSH /connect rejected with {}", resp.status()));

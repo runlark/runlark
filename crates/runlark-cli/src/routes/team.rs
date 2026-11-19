@@ -1,6 +1,7 @@
 use crate::routes::error::{ApiError, api_error, storage_error_to_http, team_server_error_to_http};
 use crate::routes::team_workspaces::resolve_auth;
 use crate::state::AppState;
+use crate::team_http::validate_team_path_segment;
 use crate::team_sync::{TeamSyncSummary, TeamSyncWorker, parse_server_json_response};
 use axum::Json;
 use axum::extract::{Path, State};
@@ -156,7 +157,7 @@ pub async fn team_login(
         if let Ok(conn) = state.get_connection() {
             match prev_session {
                 Some(ref prev) => {
-                    let _ = TeamAuthStore::save_session(&conn, prev);
+                    let _ = TeamAuthStore::replace_session(&conn, prev);
                 }
                 None => {
                     let _ = TeamAuthStore::delete_by_server(&conn, &clean_url);
@@ -242,7 +243,9 @@ pub async fn promote_project_to_team(
     Json(req): Json<PromoteTeamRequest>,
 ) -> Result<Json<PromoteTeamResponse>, ApiError> {
     let project_id = ProjectId::from(id);
-    let workspace_id = WorkspaceId::from(req.workspace_id);
+    let wid_seg = validate_team_path_segment(&req.workspace_id, "workspace_id")
+        .map_err(team_server_error_to_http)?;
+    let workspace_id = WorkspaceId::from(wid_seg);
     let epoch = req.ownership_epoch.unwrap_or(1).max(1);
 
     let (project, tasks, mut runs, decisions, server_url, bearer_token) = {
@@ -304,29 +307,15 @@ pub async fn promote_project_to_team(
         .map_err(team_server_error_to_http)?;
 
     let now = Timestamp(AppState::current_timestamp_ms());
-    let needs_auth_cache = {
-        let conn = state.get_connection().map_err(|e| {
-            api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "storage_error",
-                e.to_string(),
-            )
-        })?;
-        TeamAuthStore::get_by_server(&conn, &server_url)
-            .map_err(storage_error_to_http)?
-            .is_none()
-    };
-    if needs_auth_cache {
-        cache_whoami_session(
-            &state,
-            &worker,
-            &server_url,
-            &bearer_token,
-            &workspace_id,
-            now,
-        )
-        .await;
-    }
+    maybe_cache_whoami_session(
+        &state,
+        &worker,
+        &server_url,
+        &bearer_token,
+        &workspace_id,
+        now,
+    )
+    .await?;
     let binding = {
         let mut conn = state.get_connection().map_err(|e| {
             api_error(
@@ -380,6 +369,32 @@ fn resolve_promote_auth(
             Ok((s.server_url, opt_tok.map_or(s.bearer_token, str::to_string)))
         }
     }
+}
+
+async fn maybe_cache_whoami_session(
+    state: &AppState,
+    worker: &TeamSyncWorker,
+    server_url: &str,
+    bearer_token: &str,
+    workspace_id: &WorkspaceId,
+    now: Timestamp,
+) -> Result<(), ApiError> {
+    let needs_auth_cache = {
+        let conn = state.get_connection().map_err(|e| {
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                e.to_string(),
+            )
+        })?;
+        TeamAuthStore::get_by_server(&conn, server_url)
+            .map_err(storage_error_to_http)?
+            .is_none()
+    };
+    if needs_auth_cache {
+        cache_whoami_session(state, worker, server_url, bearer_token, workspace_id, now).await;
+    }
+    Ok(())
 }
 
 async fn cache_whoami_session(

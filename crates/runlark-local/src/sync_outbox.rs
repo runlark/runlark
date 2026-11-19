@@ -107,10 +107,12 @@ impl SyncOutboxStore {
         })
     }
 
-    /// Persists a new outbound team command in `sync_outbox` (idempotent on `command_id`).
+    /// Persists a new outbound team command in `sync_outbox` (idempotent on identical `command_id`).
     ///
     /// # Errors
-    /// Returns [`StorageError`] if conversion or SQL execution fails.
+    /// Returns [`StorageError::CommandPayloadConflict`] if `command_id` already exists with a
+    /// different workspace, command type, payload, or `expected_revision`, or [`StorageError`] if
+    /// conversion or SQL execution fails.
     pub fn enqueue(conn: &Connection, entry: &SyncOutboxEntry) -> Result<(), StorageError> {
         let expected_sql = entry
             .expected_revision
@@ -120,7 +122,7 @@ impl SyncOutboxStore {
             .conflict_server_revision
             .map(|r| to_sql_i64(r.0))
             .transpose()?;
-        conn.execute(
+        let inserted = conn.execute(
             concat!(
                 "INSERT INTO sync_outbox (",
                 "command_id, workspace_id, project_id, draft_id, command_type, payload_json, ",
@@ -143,6 +145,17 @@ impl SyncOutboxStore {
                 to_sql_i64(entry.updated_at.0)?,
             ],
         )?;
+        if inserted == 0
+            && let Some(existing) = Self::get(conn, &entry.command_id)?
+            && (existing.workspace_id != entry.workspace_id
+                || existing.command_type != entry.command_type
+                || existing.payload_json != entry.payload_json
+                || existing.expected_revision != entry.expected_revision)
+        {
+            return Err(StorageError::CommandPayloadConflict(
+                entry.command_id.clone(),
+            ));
+        }
         Ok(())
     }
 
@@ -215,6 +228,7 @@ impl SyncOutboxStore {
     fn update_status_with_draft<F, G>(
         conn: &mut Connection,
         command_id: &CommandId,
+        preserve_acked: bool,
         update_outbox: F,
         update_draft: G,
     ) -> Result<(), StorageError>
@@ -225,6 +239,9 @@ impl SyncOutboxStore {
         with_immediate_tx(conn, |tx| {
             let existing = Self::get(tx, command_id)?
                 .ok_or_else(|| StorageError::SyncOutboxNotFound(command_id.clone()))?;
+            if preserve_acked && existing.status == SyncOutboxStatus::Acked {
+                return Ok(());
+            }
             update_outbox(tx)?;
             if let Some(ref did) = existing.draft_id
                 && DraftStore::get_draft(tx, did)?.is_some()
@@ -249,6 +266,7 @@ impl SyncOutboxStore {
         Self::update_status_with_draft(
             conn,
             command_id,
+            false,
             |tx| {
                 tx.execute(
                     concat!(
@@ -265,7 +283,7 @@ impl SyncOutboxStore {
     }
 
     /// Marks an outbox command as `conflict` (`409`) and surfaces the conflict on any linked
-    /// `OfflineDraft` atomically inside `with_immediate_tx`.
+    /// `OfflineDraft` atomically inside `with_immediate_tx`. Terminal `acked` entries are preserved.
     ///
     /// # Errors
     /// Returns [`StorageError::SyncOutboxNotFound`] if missing, or [`StorageError`] on SQL failure.
@@ -281,12 +299,13 @@ impl SyncOutboxStore {
         Self::update_status_with_draft(
             conn,
             command_id,
+            true,
             |tx| {
                 tx.execute(
                     concat!(
                         "UPDATE sync_outbox ",
                         "SET status = 'conflict', last_error = ?2, conflict_server_revision = ?3, updated_at = ?4 ",
-                        "WHERE command_id = ?1"
+                        "WHERE command_id = ?1 AND status != 'acked'"
                     ),
                     params![command_id.as_ref(), reason, rev_sql, now_sql],
                 )?;
@@ -297,7 +316,7 @@ impl SyncOutboxStore {
     }
 
     /// Marks an outbox command as `failed` and updates any linked `OfflineDraft` to `Conflict`
-    /// atomically inside `with_immediate_tx`.
+    /// atomically inside `with_immediate_tx`. Terminal `acked` entries are preserved.
     ///
     /// # Errors
     /// Returns [`StorageError::SyncOutboxNotFound`] if missing, or [`StorageError`] on SQL failure.
@@ -311,9 +330,10 @@ impl SyncOutboxStore {
         Self::update_status_with_draft(
             conn,
             command_id,
+            true,
             |tx| {
                 tx.execute(
-                    "UPDATE sync_outbox SET status = 'failed', last_error = ?2, updated_at = ?3 WHERE command_id = ?1",
+                    "UPDATE sync_outbox SET status = 'failed', last_error = ?2, updated_at = ?3 WHERE command_id = ?1 AND status != 'acked'",
                     params![command_id.as_ref(), reason, now_sql],
                 )?;
                 Ok(())

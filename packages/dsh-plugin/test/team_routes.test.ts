@@ -292,6 +292,11 @@ test("web_board_routes proxies team workspaces/invites/promote/sync/drafts/comme
     assert.ok(
       recorded.some((r) => r.path === "/api/v1/team/drafts" && r.query === "?project_id=proj_1"),
     );
+
+    const badUri = await fetch(`${baseUrl}/api/runlark/team/workspaces/%ZZ/members`);
+    assert.equal(badUri.status, 400);
+    const badUriBody = (await badUri.json()) as { error: string };
+    assert.equal(badUriBody.error, "invalid_uri");
   } finally {
     proxyServer.closeAllConnections();
     daemonServer.closeAllConnections();

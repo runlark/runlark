@@ -5,6 +5,7 @@ use crate::connection::to_sql_i64;
 use crate::error::StorageError;
 use crate::project_store::ProjectStore;
 use crate::session_store::SessionStore;
+use crate::sync_store::LOCAL_OWNED_RUN_PREDICATE;
 use runlark_domain::{
     ArtifactDigest, CommandId, ProjectId, Revision, Run, Task, TaskId, Timestamp,
 };
@@ -110,13 +111,20 @@ impl RunQueries {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
-    /// Lists all runs currently consuming an execution slot (`running` or `cancel_requested`).
+    /// Lists all locally owned runs currently consuming an execution slot (`running` or
+    /// `cancel_requested`), excluding remote teammates' synced `TeamManaged` runs.
     ///
     /// # Errors
     /// Returns [`StorageError`] if the SQL query fails.
     pub fn list_executing_runs(conn: &Connection) -> Result<Vec<Run>, StorageError> {
         let sql = format!(
-            "SELECT {RUN_COLUMNS} FROM runs WHERE status IN ('running', 'cancel_requested') ORDER BY created_at ASC, rowid ASC"
+            concat!(
+                "SELECT {} FROM runs r ",
+                "WHERE r.status IN ('running', 'cancel_requested') ",
+                "AND {} ",
+                "ORDER BY r.created_at ASC, r.rowid ASC"
+            ),
+            RUN_COLUMNS, LOCAL_OWNED_RUN_PREDICATE
         );
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map([], SessionStore::row_to_run)?;

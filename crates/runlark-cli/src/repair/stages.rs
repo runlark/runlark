@@ -43,6 +43,7 @@ pub(super) struct PassFinalizeInput<'a> {
     pub(super) diff_snap: &'a GitDiffSnapshot,
     pub(super) refs: (ArtifactRef, ArtifactRef, ArtifactRef),
     pub(super) report: ValidationReport,
+    pub(super) is_team_managed: bool,
     pub(super) events_out: &'a mut BufferedEvents,
     pub(super) now: Timestamp,
 }
@@ -55,6 +56,7 @@ pub(super) struct FailureHandleInput<'a> {
     pub(super) refs: (ArtifactRef, ArtifactRef, ArtifactRef),
     pub(super) report: ValidationReport,
     pub(super) elapsed_ms_override: Option<u64>,
+    pub(super) is_team_managed: bool,
     pub(super) events_out: &'a mut BufferedEvents,
     pub(super) now: Timestamp,
 }
@@ -193,6 +195,7 @@ impl WorkflowPipeline {
             diff_snap,
             refs: (diff_ref, verif_log_ref, wasm_ref),
             report,
+            is_team_managed,
             events_out,
             now,
         } = input;
@@ -246,7 +249,9 @@ impl WorkflowPipeline {
             task.stage = TaskStage::Acceptance;
             task.workflow_stage = WorkflowStage::HumanAcceptance;
             task.head_ref = Some(diff_snap.branch_name.clone());
-            task.revision = Revision(expected.0 + 1);
+            if !is_team_managed {
+                task.revision = Revision(expected.0 + 1);
+            }
             task.updated_at = now;
             TaskStore::update_task_with_revision(conn, &task, expected)?;
             if prev_stage != TaskStage::Acceptance {
@@ -290,6 +295,7 @@ impl WorkflowPipeline {
             refs,
             report,
             elapsed_ms_override,
+            is_team_managed,
             events_out,
             now,
         } = input;
@@ -325,6 +331,7 @@ impl WorkflowPipeline {
                     &new_run,
                     &events,
                     &reason_text,
+                    is_team_managed,
                     events_out,
                     now,
                 )?;
@@ -369,6 +376,7 @@ impl WorkflowPipeline {
         new_run: &Run,
         events: &[DomainEvent],
         reason_text: &str,
+        is_team_managed: bool,
         events_out: &mut BufferedEvents,
         now: Timestamp,
     ) -> Result<(), PipelineError> {
@@ -378,7 +386,9 @@ impl WorkflowPipeline {
         {
             let expected = task.revision;
             task.workflow_stage = WorkflowStage::Implementation;
-            task.revision = Revision(expected.0 + 1);
+            if !is_team_managed {
+                task.revision = Revision(expected.0 + 1);
+            }
             task.updated_at = now;
             TaskStore::update_task_with_revision(conn, &task, expected)?;
         }

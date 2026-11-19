@@ -1,5 +1,6 @@
 use crate::routes::error::{ApiError, api_error, storage_error_to_http, team_server_error_to_http};
 use crate::state::AppState;
+use crate::team_http::validate_team_path_segment;
 use crate::team_sync::{TeamSyncWorker, parse_server_json_response};
 use axum::Json;
 use axum::extract::{Path, State};
@@ -127,19 +128,22 @@ pub async fn create_workspace(
     if updated_auth.default_workspace_id.is_none() {
         updated_auth.default_workspace_id = Some(detail.workspace.id.clone());
         updated_auth.updated_at = Timestamp(AppState::current_timestamp_ms());
-        let conn = state.get_connection().map_err(|e| {
-            api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "storage_error",
-                e.to_string(),
-            )
-        })?;
-        TeamAuthStore::save_session(&conn, &updated_auth).map_err(storage_error_to_http)?;
+        if let Ok(conn) = state.get_connection()
+            && let Err(err) = TeamAuthStore::save_session(&conn, &updated_auth)
+        {
+            tracing::warn!("Failed to update default workspace after create: {err}");
+        }
     }
-    let _ = TeamSyncWorker::new(state)
+    if let Err(err) = TeamSyncWorker::new(state.clone())
         .sync_workspace(&auth.server_url, &auth.bearer_token, &detail.workspace.id)
         .await
-        .map_err(team_server_error_to_http)?;
+    {
+        tracing::warn!(
+            workspace_id = %detail.workspace.id,
+            "Post-create workspace sync deferred: {err}"
+        );
+        state.notify_team_sync();
+    }
     Ok((StatusCode::CREATED, Json(detail)))
 }
 
@@ -151,9 +155,11 @@ pub async fn get_workspace(
     State(state): State<AppState>,
     Path(wid): Path<String>,
 ) -> Result<Json<WorkspaceDetailResponse>, ApiError> {
-    let ws_id = WorkspaceId::from(wid);
+    let wid_seg =
+        validate_team_path_segment(&wid, "workspace_id").map_err(team_server_error_to_http)?;
+    let ws_id = WorkspaceId::from(wid_seg);
     let auth = resolve_auth(&state, None, Some(&ws_id))?;
-    let url = format!("{}/api/v1/workspaces/{}", auth.server_url, ws_id.as_ref());
+    let url = format!("{}/api/v1/workspaces/{wid_seg}", auth.server_url);
     let worker = TeamSyncWorker::new(state.clone());
     if let Ok(resp) = worker
         .http()
@@ -202,13 +208,11 @@ pub async fn list_members(
     State(state): State<AppState>,
     Path(wid): Path<String>,
 ) -> Result<Json<Vec<WorkspaceMember>>, ApiError> {
-    let ws_id = WorkspaceId::from(wid);
+    let wid_seg =
+        validate_team_path_segment(&wid, "workspace_id").map_err(team_server_error_to_http)?;
+    let ws_id = WorkspaceId::from(wid_seg);
     let auth = resolve_auth(&state, None, Some(&ws_id))?;
-    let url = format!(
-        "{}/api/v1/workspaces/{}/members",
-        auth.server_url,
-        ws_id.as_ref()
-    );
+    let url = format!("{}/api/v1/workspaces/{wid_seg}/members", auth.server_url);
     let worker = TeamSyncWorker::new(state.clone());
     if let Ok(resp) = worker
         .http()
@@ -227,6 +231,9 @@ pub async fn list_members(
                 e.to_string(),
             )
         })?;
+        let now = Timestamp(AppState::current_timestamp_ms());
+        SyncStore::ensure_workspace_placeholder(&conn, &auth.server_url, &ws_id, now)
+            .map_err(storage_error_to_http)?;
         for m in &members {
             SyncStore::upsert_member(&conn, m).map_err(storage_error_to_http)?;
         }
@@ -254,12 +261,14 @@ pub async fn update_member_role(
     Path((wid, uid)): Path<(String, String)>,
     Json(req): Json<UpdateMemberRoleRequest>,
 ) -> Result<Json<WorkspaceMember>, ApiError> {
-    let ws_id = WorkspaceId::from(wid);
+    let wid_seg =
+        validate_team_path_segment(&wid, "workspace_id").map_err(team_server_error_to_http)?;
+    let uid_seg = validate_team_path_segment(&uid, "user_id").map_err(team_server_error_to_http)?;
+    let ws_id = WorkspaceId::from(wid_seg);
     let auth = resolve_auth(&state, None, Some(&ws_id))?;
     let url = format!(
-        "{}/api/v1/workspaces/{}/members/{uid}",
-        auth.server_url,
-        ws_id.as_ref()
+        "{}/api/v1/workspaces/{wid_seg}/members/{uid_seg}",
+        auth.server_url
     );
     let resp = TeamSyncWorker::new(state)
         .http()
@@ -290,12 +299,13 @@ pub async fn create_invitation(
     Path(wid): Path<String>,
     Json(req): Json<CreateInvitationRequest>,
 ) -> Result<(StatusCode, Json<CreateInvitationResponse>), ApiError> {
-    let ws_id = WorkspaceId::from(wid);
+    let wid_seg =
+        validate_team_path_segment(&wid, "workspace_id").map_err(team_server_error_to_http)?;
+    let ws_id = WorkspaceId::from(wid_seg);
     let auth = resolve_auth(&state, None, Some(&ws_id))?;
     let url = format!(
-        "{}/api/v1/workspaces/{}/invitations",
-        auth.server_url,
-        ws_id.as_ref()
+        "{}/api/v1/workspaces/{wid_seg}/invitations",
+        auth.server_url
     );
     let resp = TeamSyncWorker::new(state)
         .http()
@@ -329,12 +339,15 @@ pub async fn revoke_invitation(
     State(state): State<AppState>,
     Path((wid, invite_id)): Path<(String, String)>,
 ) -> Result<Json<WorkspaceInvitation>, ApiError> {
-    let ws_id = WorkspaceId::from(wid);
+    let wid_seg =
+        validate_team_path_segment(&wid, "workspace_id").map_err(team_server_error_to_http)?;
+    let inv_seg =
+        validate_team_path_segment(&invite_id, "invite_id").map_err(team_server_error_to_http)?;
+    let ws_id = WorkspaceId::from(wid_seg);
     let auth = resolve_auth(&state, None, Some(&ws_id))?;
     let url = format!(
-        "{}/api/v1/workspaces/{}/invitations/{invite_id}/revoke",
-        auth.server_url,
-        ws_id.as_ref()
+        "{}/api/v1/workspaces/{wid_seg}/invitations/{inv_seg}/revoke",
+        auth.server_url
     );
     let resp = TeamSyncWorker::new(state)
         .http()
@@ -421,7 +434,7 @@ pub async fn accept_invitation(
         runner_name: None,
         updated_at: now,
     };
-    let prev_session = {
+    {
         let conn = state.get_connection().map_err(|e| {
             api_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -429,12 +442,11 @@ pub async fn accept_invitation(
                 e.to_string(),
             )
         })?;
-        let prev =
-            TeamAuthStore::get_by_server(&conn, &clean_url).map_err(storage_error_to_http)?;
         TeamAuthStore::save_session(&conn, &session).map_err(storage_error_to_http)?;
-        prev
-    };
+    }
 
+    // The server already consumed the one-time invite token and issued a fresh bearer token.
+    // Never delete the persisted token if follow-up snapshot sync transiently fails; defer to background sync.
     if let Err(err) = worker
         .sync_workspace(
             &clean_url,
@@ -443,17 +455,11 @@ pub async fn accept_invitation(
         )
         .await
     {
-        if let Ok(conn) = state.get_connection() {
-            match prev_session {
-                Some(ref prev) => {
-                    let _ = TeamAuthStore::save_session(&conn, prev);
-                }
-                None => {
-                    let _ = TeamAuthStore::delete_by_server(&conn, &clean_url);
-                }
-            }
-        }
-        return Err(team_server_error_to_http(err));
+        tracing::warn!(
+            workspace_id = %accepted.member.workspace_id,
+            "Initial workspace sync after accept_invitation deferred (session token preserved): {err}"
+        );
+        state.notify_team_sync();
     }
 
     Ok(Json(AcceptInvitationLocalResponse {

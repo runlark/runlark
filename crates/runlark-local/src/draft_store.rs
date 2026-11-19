@@ -98,8 +98,29 @@ impl DraftStore {
     /// Inserts or updates an [`OfflineDraft`] in `SQLite`.
     ///
     /// # Errors
-    /// Returns [`StorageError`] if integer conversion or SQL execution fails.
+    /// Returns [`StorageError::InvalidState`] if reusing an existing `draft_id` with a different
+    /// `(project_id, task_id, kind)` or attempting to regress a `Synced` draft, or [`StorageError`]
+    /// if integer conversion or SQL execution fails.
     pub fn save_draft(conn: &Connection, draft: &OfflineDraft) -> Result<(), StorageError> {
+        if let Some(existing) = Self::get_draft(conn, &draft.id)? {
+            if existing.project_id != draft.project_id
+                || existing.task_id != draft.task_id
+                || existing.kind != draft.kind
+            {
+                return Err(StorageError::InvalidState(format!(
+                    "draft {} cannot change project_id, task_id, or draft_kind",
+                    draft.id
+                )));
+            }
+            if matches!(existing.sync_state, DraftSyncState::Synced)
+                && !matches!(draft.sync_state, DraftSyncState::Synced)
+            {
+                return Err(StorageError::InvalidState(format!(
+                    "draft {} is already synced and cannot be reopened",
+                    draft.id
+                )));
+            }
+        }
         let base_rev = draft.base_revision.map(|r| to_sql_i64(r.0)).transpose()?;
         let (conflict_rev, conflict_reason) = match &draft.sync_state {
             DraftSyncState::Conflict {
@@ -208,6 +229,7 @@ impl DraftStore {
     }
 
     /// Marks an existing draft as `Conflict`, preserving `server_revision` and `reason` visibly.
+    /// Terminal `Synced` drafts are preserved without regression.
     ///
     /// # Errors
     /// Returns [`StorageError::DraftNotFound`] if the draft does not exist, or [`StorageError`] on SQL failure.
@@ -218,18 +240,20 @@ impl DraftStore {
         reason: &str,
         now: Timestamp,
     ) -> Result<(), StorageError> {
+        let existing = Self::get_draft(conn, draft_id)?
+            .ok_or_else(|| StorageError::DraftNotFound(draft_id.clone()))?;
+        if matches!(existing.sync_state, DraftSyncState::Synced) {
+            return Ok(());
+        }
         let rev_sql = server_revision.map(|r| to_sql_i64(r.0)).transpose()?;
-        let affected = conn.execute(
+        conn.execute(
             concat!(
                 "UPDATE offline_drafts ",
                 "SET sync_state = 'conflict', conflict_server_revision = ?2, conflict_reason = ?3, updated_at = ?4 ",
-                "WHERE draft_id = ?1"
+                "WHERE draft_id = ?1 AND sync_state != 'synced'"
             ),
             params![draft_id.as_ref(), rev_sql, reason, to_sql_i64(now.0)?],
         )?;
-        if affected == 0 {
-            return Err(StorageError::DraftNotFound(draft_id.clone()));
-        }
         Ok(())
     }
 
@@ -269,6 +293,11 @@ impl DraftStore {
     ) -> Result<(), StorageError> {
         let existing = Self::get_draft(conn, draft_id)?
             .ok_or_else(|| StorageError::DraftNotFound(draft_id.clone()))?;
+        if matches!(existing.sync_state, DraftSyncState::Synced) {
+            return Err(StorageError::InvalidState(format!(
+                "draft {draft_id} is already synced and cannot be retried"
+            )));
+        }
         let updated = OfflineDraft {
             payload_json: new_payload_json
                 .map(str::to_string)

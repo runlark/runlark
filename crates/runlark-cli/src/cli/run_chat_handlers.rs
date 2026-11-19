@@ -1,4 +1,4 @@
-use crate::cli::client::{DaemonHttpClient, print_output};
+use crate::cli::client::{DaemonHttpClient, print_output, validate_path_segment};
 use crate::cli::{PluginAction, QuestionAction, RunAction};
 use crate::plugin;
 use serde_json::{Value, json};
@@ -14,6 +14,7 @@ pub(super) async fn handle_task_pr(
     draft: bool,
     json_mode: bool,
 ) -> CliResult {
+    let id = validate_path_segment(id, "task_id")?;
     let mut body = json!({ "draft": draft });
     if let Some(t) = title {
         body["title"] = json!(t);
@@ -72,6 +73,7 @@ pub async fn handle_run(
             list_runs_cmd(client, task_id, status, json_mode).await
         }
         RunAction::Show { id } => {
+            let id = validate_path_segment(&id, "run_id")?;
             let val = client.get_json(&format!("/api/v1/runs/{id}")).await?;
             print_output(&val, json_mode, |v| {
                 format!(
@@ -83,6 +85,7 @@ pub async fn handle_run(
             })
         }
         RunAction::Events { id, after_seq } => {
+            let id = validate_path_segment(&id, "run_id")?;
             let params: Vec<(&str, String)> = after_seq
                 .into_iter()
                 .map(|s| ("after_seq", s.to_string()))
@@ -93,6 +96,7 @@ pub async fn handle_run(
             print_output(&val, json_mode, format_run_events)
         }
         RunAction::History { id } => {
+            let id = validate_path_segment(&id, "run_id")?;
             let val = client
                 .get_json(&format!("/api/v1/runs/{id}/history"))
                 .await?;
@@ -108,6 +112,7 @@ pub async fn handle_run(
             })
         }
         RunAction::Diff { id } => {
+            let id = validate_path_segment(&id, "run_id")?;
             let val = client.get_json(&format!("/api/v1/runs/{id}/diff")).await?;
             print_output(&val, json_mode, |v| {
                 format!(
@@ -125,6 +130,7 @@ pub async fn handle_run(
             task_id,
             package_name,
         } => {
+            let id = validate_path_segment(&id, "run_id")?;
             let body = json!({ "task_id": task_id, "package_name": package_name });
             let val = client
                 .post_json(&format!("/api/v1/runs/{id}/verify"), Some(&body))
@@ -231,6 +237,7 @@ pub async fn handle_question(
             })
         }
         QuestionAction::Answer { id, answer } => {
+            let id = validate_path_segment(&id, "question_id")?;
             let body = json!({ "answer": answer });
             let val = client
                 .post_json(&format!("/api/v1/questions/{id}/answer"), Some(&body))

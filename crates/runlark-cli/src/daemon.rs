@@ -198,6 +198,11 @@ pub async fn run_daemon_with_dsh(
     let dsh_url = dsh_url.or_else(|| std::env::var("RUNLARK_DSH_URL").ok());
     let dsh_token = dsh_token.or_else(|| std::env::var("RUNLARK_DSH_TOKEN").ok());
     std::fs::create_dir_all(&data_dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&data_dir, std::fs::Permissions::from_mode(0o700));
+    }
     let db_path = data_dir.join("runlark.db");
 
     tracing::info!("Initializing SQLite database at {:?}", db_path);

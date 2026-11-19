@@ -341,6 +341,25 @@ impl SyncStore {
         Ok(())
     }
 
+    /// Ensures a placeholder row exists in `team_workspaces` before upserting child rows
+    /// (`team_runners`, `team_members`) prior to initial snapshot sync.
+    ///
+    /// # Errors
+    /// Returns [`StorageError`] on SQL failure.
+    pub fn ensure_workspace_placeholder(
+        conn: &Connection,
+        server_url: &str,
+        workspace_id: &WorkspaceId,
+        now: Timestamp,
+    ) -> Result<(), StorageError> {
+        Self::ensure_workspace_placeholder_in_tx(
+            conn,
+            server_url.trim_end_matches('/'),
+            workspace_id,
+            now,
+        )
+    }
+
     pub(super) fn ensure_workspace_placeholder_in_tx(
         tx: &Connection,
         server_url: &str,

@@ -2,6 +2,7 @@ use crate::routes::error::{ApiError, api_error, storage_error_to_http, team_serv
 use crate::routes::team_workspaces::resolve_auth;
 use crate::runner_agent::{RunOwnershipResponse, RunnerAgentWorker};
 use crate::state::AppState;
+use crate::team_http::validate_team_path_segment;
 use crate::team_sync::{TeamCommandSubmissionResult, TeamSyncWorker, parse_server_json_response};
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -90,12 +91,10 @@ pub async fn list_runners(
     Query(query): Query<WorkspaceQuery>,
 ) -> Result<Json<Vec<RunnerRegistration>>, ApiError> {
     let wid = resolve_workspace_id(&state, query.workspace_id.as_deref())?;
+    let wid_seg = validate_team_path_segment(wid.as_ref(), "workspace_id")
+        .map_err(team_server_error_to_http)?;
     let auth = resolve_auth(&state, None, Some(&wid))?;
-    let url = format!(
-        "{}/api/v1/workspaces/{}/runners",
-        auth.server_url,
-        wid.as_ref()
-    );
+    let url = format!("{}/api/v1/workspaces/{wid_seg}/runners", auth.server_url);
     let worker = TeamSyncWorker::new(state.clone());
     if let Ok(resp) = worker
         .http()
@@ -114,6 +113,9 @@ pub async fn list_runners(
                 e.to_string(),
             )
         })?;
+        let now = Timestamp(AppState::current_timestamp_ms());
+        SyncStore::ensure_workspace_placeholder(&conn, &auth.server_url, &wid, now)
+            .map_err(storage_error_to_http)?;
         for r in &runners {
             SyncStore::upsert_runner(&conn, r).map_err(storage_error_to_http)?;
         }
@@ -214,8 +216,12 @@ pub async fn assign_runner(
     Path(run_id): Path<String>,
     Json(req): Json<AssignRunnerRequest>,
 ) -> Result<Json<RunOwnershipResponse>, ApiError> {
-    let rid = RunId::from(run_id);
+    let rid_seg =
+        validate_team_path_segment(&run_id, "run_id").map_err(team_server_error_to_http)?;
+    let rid = RunId::from(rid_seg);
     let wid = resolve_workspace_id(&state, req.workspace_id.as_deref())?;
+    let wid_seg = validate_team_path_segment(wid.as_ref(), "workspace_id")
+        .map_err(team_server_error_to_http)?;
     let auth = resolve_auth(&state, None, Some(&wid))?;
     let expected_revision = if let Some(rev) = req.expected_revision {
         rev
@@ -233,10 +239,8 @@ pub async fn assign_runner(
     };
     let worker = TeamSyncWorker::new(state.clone());
     let url = format!(
-        "{}/api/v1/workspaces/{}/runs/{}/assign",
-        auth.server_url,
-        wid.as_ref(),
-        rid.as_ref()
+        "{}/api/v1/workspaces/{wid_seg}/runs/{rid_seg}/assign",
+        auth.server_url
     );
     let resp = worker
         .http()

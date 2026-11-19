@@ -1,20 +1,20 @@
 use crate::runner_buffer::{
-    RunFlushOutcome, commit_flushed_chunk, group_contiguous_reports, mark_conflicted_chunk,
+    RunFlushOutcome, commit_flushed_chunk, group_contiguous_reports, is_fencing_conflict_code,
+    load_assigned_executable_runs, mark_conflicted_chunk, persist_runner_registration,
     prepare_run_worktrees,
 };
+pub use crate::runner_buffer::{RunOwnershipResponse, RunnerStateInput, RunnerTickSummary};
 use crate::state::AppState;
+use crate::team_http::validate_team_path_segment;
 use crate::team_sync::{TeamServerError, parse_server_json_response};
 use reqwest::Client;
 use runlark_domain::{
-    EventSeq, LeaseEpoch, ProjectOwnershipMode, Run, RunId, RunOwnership, RunStatus,
-    RunnerEventInput, RunnerId, RunnerRegistration, RunnerRunReport, Timestamp, WorkflowStage,
-    WorkspaceId, validate_runner_fencing,
+    EventSeq, LeaseEpoch, Run, RunId, RunOwnership, RunnerEventInput, RunnerId, RunnerRegistration,
+    RunnerRunReport, Timestamp, WorkspaceId, validate_runner_fencing,
 };
 use runlark_local::{
-    ProjectStore, RunnerBufferStore, StorageError, SyncStore, TeamAuthStore, open_sqlite,
-    with_immediate_tx,
+    RunnerBufferStore, StorageError, SyncStore, TeamAuthStore, open_sqlite, with_immediate_tx,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -23,39 +23,9 @@ use tokio::sync::{Notify, watch};
 
 enum ChunkPostOutcome {
     Committed(Box<RunOwnershipResponse>),
-    PermanentConflict,
+    FencingRejected,
+    SingleChunkConflict,
     RunnerNotOnlineDeferred,
-}
-
-/// Server response returned by `POST /runs/{run_id}/assign` and `POST /runs/{run_id}/runner-state`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RunOwnershipResponse {
-    pub run: Run,
-    pub ownership: RunOwnership,
-}
-
-/// Input payload for [`RunnerAgentWorker::report_or_buffer_run_state`].
-#[derive(Debug, Clone)]
-pub struct RunnerStateInput<'a> {
-    pub workspace_id: &'a WorkspaceId,
-    pub run_id: &'a RunId,
-    pub runner_id: &'a RunnerId,
-    pub lease_epoch: LeaseEpoch,
-    pub status: Option<RunStatus>,
-    pub workflow_stage: Option<WorkflowStage>,
-    pub head_sha: Option<String>,
-    pub base_sha: Option<String>,
-    pub event_type: &'a str,
-    pub payload_json: &'a str,
-}
-
-/// Summary counters returned by a single [`RunnerAgentWorker::tick_once`] pass.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RunnerTickSummary {
-    pub heartbeats_sent: usize,
-    pub buffered_events_flushed: usize,
-    pub assigned_runs_prepared: usize,
-    pub fencing_conflicts: usize,
 }
 
 /// Background and on-demand worker managing runner registration, heartbeats, strict
@@ -90,6 +60,14 @@ impl RunnerAgentWorker {
     pub fn with_poll_interval(mut self, interval: Duration) -> Self {
         self.poll_interval = interval;
         self
+    }
+
+    pub(crate) fn with_http(state: AppState, http: Client) -> Self {
+        Self {
+            state,
+            http,
+            poll_interval: Duration::from_secs(2),
+        }
     }
 
     /// Runs the background heartbeat, buffer flush, and assigned-run preparation loop.
@@ -191,10 +169,10 @@ impl RunnerAgentWorker {
         runner_id: Option<RunnerId>,
         name: &str,
     ) -> Result<RunnerRegistration, TeamServerError> {
+        let wid = validate_team_path_segment(workspace_id.as_ref(), "workspace_id")?;
         let url = format!(
-            "{}/api/v1/workspaces/{}/runners/register",
-            server_url.trim_end_matches('/'),
-            workspace_id.as_ref()
+            "{}/api/v1/workspaces/{wid}/runners/register",
+            server_url.trim_end_matches('/')
         );
         let body = json!({
             "runner_id": runner_id.map(|r| r.0),
@@ -211,9 +189,7 @@ impl RunnerAgentWorker {
         let reg: RunnerRegistration = parse_server_json_response(resp).await?;
 
         let now = Timestamp(AppState::current_timestamp_ms());
-        let conn = open_sqlite(&self.state.db_path)?;
-        SyncStore::upsert_runner(&conn, &reg)?;
-        TeamAuthStore::set_runner_identity(&conn, server_url, &reg.id, &reg.name, now)?;
+        persist_runner_registration(&self.state.db_path, server_url, &reg, true, now)?;
         Ok(reg)
     }
 
@@ -228,11 +204,11 @@ impl RunnerAgentWorker {
         workspace_id: &WorkspaceId,
         runner_id: &RunnerId,
     ) -> Result<RunnerRegistration, TeamServerError> {
+        let wid = validate_team_path_segment(workspace_id.as_ref(), "workspace_id")?;
+        let rid = validate_team_path_segment(runner_id.as_ref(), "runner_id")?;
         let url = format!(
-            "{}/api/v1/workspaces/{}/runners/{}/heartbeat",
-            server_url.trim_end_matches('/'),
-            workspace_id.as_ref(),
-            runner_id.as_ref()
+            "{}/api/v1/workspaces/{wid}/runners/{rid}/heartbeat",
+            server_url.trim_end_matches('/')
         );
         let resp = self
             .http
@@ -242,8 +218,8 @@ impl RunnerAgentWorker {
             .await
             .map_err(|e| TeamServerError::Offline(e.to_string()))?;
         let reg: RunnerRegistration = parse_server_json_response(resp).await?;
-        let conn = open_sqlite(&self.state.db_path)?;
-        SyncStore::upsert_runner(&conn, &reg)?;
+        let now = Timestamp(AppState::current_timestamp_ms());
+        persist_runner_registration(&self.state.db_path, server_url, &reg, false, now)?;
         Ok(reg)
     }
 
@@ -351,11 +327,24 @@ impl RunnerAgentWorker {
         let mut flushed_count = 0_usize;
         let mut conflict_count = 0_usize;
         for run_id in run_ids {
-            let outcome = self
+            match self
                 .flush_run_buffered_events(server_url, bearer_token, workspace_id, &run_id)
-                .await?;
-            flushed_count += outcome.flushed_seqs.len();
-            conflict_count += outcome.conflicts;
+                .await
+            {
+                Ok(outcome) => {
+                    flushed_count += outcome.flushed_seqs.len();
+                    conflict_count += outcome.conflicts;
+                }
+                Err(
+                    TeamServerError::Forbidden(msg)
+                    | TeamServerError::NotFound(msg)
+                    | TeamServerError::BadRequest(msg),
+                ) => {
+                    tracing::warn!(run_id = %run_id, "Skipping non-retryable runner flush error: {msg}");
+                    conflict_count += 1;
+                }
+                Err(err) => return Err(err),
+            }
         }
         Ok((flushed_count, conflict_count))
     }
@@ -367,6 +356,7 @@ impl RunnerAgentWorker {
         workspace_id: &WorkspaceId,
         run_id: &RunId,
     ) -> Result<RunFlushOutcome, TeamServerError> {
+        let _flush_guard = self.state.runner_flush_lock.lock().await;
         let entries = {
             let conn = open_sqlite(&self.state.db_path)?;
             RunnerBufferStore::list_unflushed_for_run(&conn, workspace_id, run_id)?
@@ -394,10 +384,14 @@ impl RunnerAgentWorker {
                 ChunkPostOutcome::Committed(resp) => {
                     commit_flushed_chunk(&self.state.db_path, run_id, &resp.run, &chunk, &mut out)?;
                 }
-                ChunkPostOutcome::PermanentConflict => {
+                ChunkPostOutcome::FencingRejected => {
                     mark_conflicted_chunk(&self.state.db_path, run_id, &chunk, &mut out)?;
                     out.conflicts += 1;
                     rejected_fence = Some(fence);
+                }
+                ChunkPostOutcome::SingleChunkConflict => {
+                    mark_conflicted_chunk(&self.state.db_path, run_id, &chunk, &mut out)?;
+                    out.conflicts += 1;
                 }
                 ChunkPostOutcome::RunnerNotOnlineDeferred => {
                     out.conflicts += 1;
@@ -436,8 +430,12 @@ impl RunnerAgentWorker {
                         {
                             Ok(ChunkPostOutcome::RunnerNotOnlineDeferred)
                         }
-                        Err(TeamServerError::Conflict { .. }) => {
-                            Ok(ChunkPostOutcome::PermanentConflict)
+                        Err(TeamServerError::Conflict { code: rc, .. }) => {
+                            Ok(if is_fencing_conflict_code(&rc) {
+                                ChunkPostOutcome::FencingRejected
+                            } else {
+                                ChunkPostOutcome::SingleChunkConflict
+                            })
                         }
                         Err(err) => Err(err),
                     },
@@ -445,7 +443,11 @@ impl RunnerAgentWorker {
                     Err(_) => Ok(ChunkPostOutcome::RunnerNotOnlineDeferred),
                 }
             }
-            Err(TeamServerError::Conflict { .. }) => Ok(ChunkPostOutcome::PermanentConflict),
+            Err(TeamServerError::Conflict { code, .. }) => Ok(if is_fencing_conflict_code(&code) {
+                ChunkPostOutcome::FencingRejected
+            } else {
+                ChunkPostOutcome::SingleChunkConflict
+            }),
             Err(err) => Err(err),
         }
     }
@@ -462,11 +464,11 @@ impl RunnerAgentWorker {
         run_id: &RunId,
         report: &RunnerRunReport,
     ) -> Result<RunOwnershipResponse, TeamServerError> {
+        let wid = validate_team_path_segment(workspace_id.as_ref(), "workspace_id")?;
+        let rid = validate_team_path_segment(run_id.as_ref(), "run_id")?;
         let url = format!(
-            "{}/api/v1/workspaces/{}/runs/{}/runner-state",
-            server_url.trim_end_matches('/'),
-            workspace_id.as_ref(),
-            run_id.as_ref()
+            "{}/api/v1/workspaces/{wid}/runs/{rid}/runner-state",
+            server_url.trim_end_matches('/')
         );
         let resp = self
             .http
@@ -489,33 +491,6 @@ impl RunnerAgentWorker {
         workspace_id: &WorkspaceId,
         runner_id: &RunnerId,
     ) -> Result<Vec<(Run, RunOwnership)>, StorageError> {
-        let conn = open_sqlite(&self.state.db_path)?;
-        let mut owned = Vec::new();
-        for binding in SyncStore::list_project_bindings(&conn)? {
-            let matches_ws = matches!(
-                &binding.ownership_mode,
-                ProjectOwnershipMode::TeamManaged {
-                    workspace_id: wid, ..
-                } if wid == workspace_id
-            );
-            if !matches_ws {
-                continue;
-            }
-            let ownerships =
-                SyncStore::list_run_ownerships_for_project(&conn, &binding.project_id)?;
-            for run in ProjectStore::list_runs_for_project(&conn, &binding.project_id)? {
-                if run.status.is_terminal() {
-                    continue;
-                }
-                if let Some(own) = ownerships.get(&run.id)
-                    && own.assigned_runner_id.as_ref() == Some(runner_id)
-                    && own.lease_epoch.0 > 0
-                    && !own.runner_unreachable
-                {
-                    owned.push((run, own.clone()));
-                }
-            }
-        }
-        Ok(owned)
+        load_assigned_executable_runs(&self.state.db_path, workspace_id, runner_id)
     }
 }

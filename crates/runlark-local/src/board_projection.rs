@@ -7,7 +7,7 @@ use crate::draft_store::DraftStore;
 use crate::error::StorageError;
 use crate::project_store::ProjectStore;
 use crate::session_store::SessionStore;
-use crate::sync_store::SyncStore;
+use crate::sync_store::{LOCAL_OWNED_RUN_PREDICATE, SyncStore};
 use crate::task_store::TaskStore;
 use runlark_domain::{
     ArtifactRef, CostSummary, CursorSeq, Decision, OfflineDraft, Project, ProjectId,
@@ -53,19 +53,24 @@ pub struct BoardSnapshot {
 pub struct BoardProjection;
 
 impl BoardProjection {
-    /// Counts runs currently occupying an execution slot across the daemon.
+    /// Counts locally owned runs currently occupying an execution slot across the daemon.
     ///
-    /// Counts ONLY `running` and `cancel_requested`; `waiting_for_approval` intentionally frees
-    /// its execution slot while awaiting human input.
+    /// Counts ONLY `running` and `cancel_requested` owned by this daemon (`SoloLocal` or leased to
+    /// this daemon's runner); `waiting_for_approval` and remote teammates' runs do not consume local
+    /// execution slots.
     ///
     /// # Errors
     /// Returns [`StorageError`] if the SQL query fails.
     pub fn count_executing_runs(conn: &Connection) -> Result<u64, StorageError> {
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM runs WHERE status IN ('running', 'cancel_requested')",
-            [],
-            |row| row.get(0),
-        )?;
+        let sql = format!(
+            concat!(
+                "SELECT COUNT(*) FROM runs r ",
+                "WHERE r.status IN ('running', 'cancel_requested') ",
+                "AND {}"
+            ),
+            LOCAL_OWNED_RUN_PREDICATE
+        );
+        let count: i64 = conn.query_row(&sql, [], |row| row.get(0))?;
         from_sql_i64(count, 0).map_err(Into::into)
     }
 

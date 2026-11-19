@@ -175,7 +175,12 @@ impl ProjectStore {
             "task_id, project_id, workflow_stage, task_kind, workflow_digest, base_sha, head_sha, ",
             "plan_version, policy_digest, budget_json, cost_summary_json, repair_attempts, pr_url ",
             "FROM runs ",
-            "WHERE project_id = ?1 OR task_id IN (SELECT task_id FROM tasks WHERE project_id = ?1) ",
+            "WHERE project_id = ?1 ",
+            "OR task_id IN (SELECT task_id FROM tasks WHERE project_id = ?1) ",
+            "OR session_id IN (",
+            "SELECT s.session_id FROM sessions s ",
+            "INNER JOIN tasks t ON s.task_id = t.task_id ",
+            "WHERE t.project_id = ?1) ",
             "ORDER BY created_at ASC, rowid ASC"
         ))?;
         let rows = stmt.query_map(params![project_id.as_ref()], SessionStore::row_to_run)?;

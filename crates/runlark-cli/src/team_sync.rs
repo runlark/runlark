@@ -4,13 +4,10 @@ use crate::team_http;
 pub use crate::team_http::{TeamServerError, parse_server_json_response};
 use reqwest::Client;
 use runlark_domain::{
-    ArtifactDigest, ArtifactRef, CommandId, CursorSeq, ProjectId, ProjectOwnershipMode, Revision,
-    RunId, TeamCommand, Timestamp, WorkspaceId, WorkspaceSnapshot,
+    ArtifactDigest, ArtifactRef, CursorSeq, ProjectOwnershipMode, Revision, TeamCommand, Timestamp,
+    WorkspaceId, WorkspaceSnapshot,
 };
-use runlark_local::{
-    StorageError, SyncOutboxEntry, SyncOutboxStatus, SyncOutboxStore, SyncStore, TeamAuthStore,
-    open_sqlite, sha256_hex,
-};
+use runlark_local::{StorageError, SyncOutboxStore, SyncStore, TeamAuthStore, open_sqlite};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -112,17 +109,33 @@ impl TeamSyncWorker {
     pub async fn sync_once(&self) -> Result<TeamSyncSummary, TeamServerError> {
         let targets = self.collect_sync_targets()?;
         let mut total = TeamSyncSummary::default();
+        let mut first_err: Option<TeamServerError> = None;
         for (server_url, bearer_token, workspace_id) in targets {
-            let sub = self
+            match self
                 .sync_workspace(&server_url, &bearer_token, &workspace_id)
-                .await?;
-            total.workspaces_synced += 1;
-            total.snapshots_applied += sub.snapshots_applied;
-            total.events_applied += sub.events_applied;
-            total.outbox_acked += sub.outbox_acked;
-            total.outbox_conflicts += sub.outbox_conflicts;
-            total.cas_uploaded += sub.cas_uploaded;
-            total.cas_downloaded += sub.cas_downloaded;
+                .await
+            {
+                Ok(sub) => {
+                    total.workspaces_synced += 1;
+                    total.snapshots_applied += sub.snapshots_applied;
+                    total.events_applied += sub.events_applied;
+                    total.outbox_acked += sub.outbox_acked;
+                    total.outbox_conflicts += sub.outbox_conflicts;
+                    total.cas_uploaded += sub.cas_uploaded;
+                    total.cas_downloaded += sub.cas_downloaded;
+                }
+                Err(err) => {
+                    tracing::warn!(workspace_id = %workspace_id, "Workspace sync failed: {err}");
+                    if first_err.is_none() {
+                        first_err = Some(err);
+                    }
+                }
+            }
+        }
+        if total.workspaces_synced == 0
+            && let Some(err) = first_err
+        {
+            return Err(err);
         }
         Ok(total)
     }
@@ -170,12 +183,35 @@ impl TeamSyncWorker {
         };
         self.heartbeat_workspace_runner(server_url, bearer_token, workspace_id)
             .await?;
-        let _ = RunnerAgentWorker::new(self.state.clone())
+        let runner = RunnerAgentWorker::with_http(self.state.clone(), self.http.clone());
+        match runner
             .flush_buffered_events(server_url, bearer_token, workspace_id)
-            .await?;
-        summary.cas_uploaded = self
+            .await
+        {
+            Ok(_) => {}
+            Err(
+                TeamServerError::Forbidden(msg)
+                | TeamServerError::NotFound(msg)
+                | TeamServerError::BadRequest(msg),
+            ) => {
+                tracing::warn!(workspace_id = %workspace_id, "Buffered runner flush skipped: {msg}");
+            }
+            Err(err) => return Err(err),
+        }
+        match self
             .upload_cas_for_workspace(server_url, bearer_token, workspace_id)
-            .await?;
+            .await
+        {
+            Ok(uploaded) => summary.cas_uploaded = uploaded,
+            Err(
+                TeamServerError::Forbidden(msg)
+                | TeamServerError::NotFound(msg)
+                | TeamServerError::BadRequest(msg),
+            ) => {
+                tracing::warn!(workspace_id = %workspace_id, "CAS upload skipped: {msg}");
+            }
+            Err(err) => return Err(err),
+        }
         let (acked, conflicts) = self
             .flush_outbox_for_workspace(server_url, bearer_token, workspace_id)
             .await?;
@@ -218,7 +254,7 @@ impl TeamSyncWorker {
                 .and_then(|s| s.runner_id)
         };
         if let Some(rid) = runner_id {
-            match RunnerAgentWorker::new(self.state.clone())
+            match RunnerAgentWorker::with_http(self.state.clone(), self.http.clone())
                 .send_heartbeat(server_url, bearer_token, workspace_id, &rid)
                 .await
             {
@@ -411,9 +447,17 @@ impl TeamSyncWorker {
             command,
         )
         .await?;
-        let _ = self
+        if let Err(err) = self
             .sync_workspace(server_url, bearer_token, workspace_id)
-            .await?;
+            .await
+        {
+            tracing::warn!(
+                workspace_id = %workspace_id,
+                command_id = %command.command_id(),
+                "Post-commit workspace sync deferred: {err}"
+            );
+            self.state.notify_team_sync();
+        }
         Ok(res)
     }
 
@@ -466,59 +510,6 @@ impl TeamSyncWorker {
     ) -> Result<Vec<u8>, TeamServerError> {
         team_http::download_artifact(&self.http, server_url, bearer_token, workspace_id, digest)
             .await
-    }
-
-    /// Derives a deterministic `CommandId` for `AttachArtifact` so retries are idempotent.
-    #[must_use]
-    pub fn deterministic_attach_command_id(
-        run_id: &RunId,
-        digest: &ArtifactDigest,
-        label: &str,
-    ) -> CommandId {
-        let key = format!("{}\0{}\0{}", run_id.as_ref(), digest.as_str(), label);
-        let hash = sha256_hex(key.as_bytes());
-        CommandId::from(format!("cmd_att_{}", &hash[..24]))
-    }
-
-    /// Builds a [`SyncOutboxEntry`] from a [`TeamCommand`].
-    ///
-    /// # Errors
-    /// Returns [`TeamServerError::Json`] if serialization fails.
-    pub fn build_outbox_entry(
-        workspace_id: &WorkspaceId,
-        project_id: Option<&ProjectId>,
-        draft_id: Option<&runlark_domain::DraftId>,
-        command: &TeamCommand,
-        expected_revision: Option<Revision>,
-        now: Timestamp,
-    ) -> Result<SyncOutboxEntry, TeamServerError> {
-        let command_type = match command {
-            TeamCommand::CreateTask(_) => "create_task",
-            TeamCommand::MoveTaskStage(_) => "move_task_stage",
-            TeamCommand::UpdateTaskPlan(_) => "update_task_plan",
-            TeamCommand::CreateTeamRun(_) => "create_team_run",
-            TeamCommand::AssignRunner(_) => "assign_runner",
-            TeamCommand::CancelRun(_) => "cancel_run",
-            TeamCommand::ForceCancelUnreachableRun(_) => "force_cancel_unreachable_run",
-            TeamCommand::AddComment(_) => "add_comment",
-            TeamCommand::RecordAttempt(_) => "record_attempt",
-            TeamCommand::RecordDecision(_) => "record_decision",
-            TeamCommand::AttachArtifact(_) => "attach_artifact",
-        };
-        Ok(SyncOutboxEntry {
-            command_id: command.command_id().clone(),
-            workspace_id: workspace_id.clone(),
-            project_id: project_id.cloned(),
-            draft_id: draft_id.cloned(),
-            command_type: command_type.to_string(),
-            payload_json: serde_json::to_string(command)?,
-            expected_revision,
-            status: SyncOutboxStatus::Pending,
-            last_error: None,
-            conflict_server_revision: None,
-            created_at: now,
-            updated_at: now,
-        })
     }
 }
 

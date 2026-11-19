@@ -90,6 +90,27 @@ struct VerifyContext {
     team_lease: Option<team_report::TeamRunLease>,
 }
 
+struct VerifyCommitInput<'a> {
+    state: &'a AppState,
+    run_id: &'a RunId,
+    project_opt: Option<&'a runlark_domain::Project>,
+    diff_snap: &'a GitDiffSnapshot,
+    checks: &'a [CheckEvidence],
+    check_logs: &'a [serde_json::Value],
+    report: ValidationReport,
+    verification_passed: bool,
+    elapsed_ms_override: Option<u64>,
+    now: Timestamp,
+}
+
+type VerifyCommitOutput = (
+    VerifyPipelineOutcome,
+    stages::BufferedEvents,
+    Option<team_report::TeamRunLease>,
+    bool,
+    Option<team_report::TaskBeforeMeta>,
+);
+
 /// Executes verification, stores CAS artifacts, and drives bounded repair or human acceptance.
 pub struct WorkflowPipeline;
 
@@ -170,7 +191,9 @@ impl WorkflowPipeline {
                 if target_stage == WorkflowStage::HumanAcceptance {
                     task.stage = TaskStage::Acceptance;
                 }
-                task.revision = Revision(expected.0 + 1);
+                if lease.is_none() {
+                    task.revision = Revision(expected.0 + 1);
+                }
                 task.updated_at = now;
                 TaskStore::update_task_with_revision(tx, task, expected)?;
             }
@@ -213,10 +236,8 @@ impl WorkflowPipeline {
         now: Timestamp,
     ) -> Result<VerifyPipelineOutcome, PipelineError> {
         let ctx = Self::load_verify_context(state, run_id)?;
-        let (run, task_opt, project_opt, team_lease) =
+        let (run, task_opt, project_opt, _initial_lease) =
             (ctx.run, ctx.task, ctx.project, ctx.team_lease);
-        let started_at_implementation = run.workflow_stage == WorkflowStage::Implementation;
-        let task_before = task_opt.as_ref().map(team_report::TaskBeforeMeta::from);
         let (diff_snap, checks, check_logs) =
             Self::collect_diff_and_checks(state, &run, &options).await?;
 
@@ -229,53 +250,19 @@ impl WorkflowPipeline {
             options.package_name.as_deref(),
         )?;
 
-        let mut conn = open_sqlite(&state.db_path)?;
-        let (outcome, buffered_events) = with_immediate_tx(&mut conn, |tx| {
-            let mut events_out = Vec::new();
-            let (diff_ref, verif_log_ref, wasm_ref) =
-                Self::persist_verification_artifacts(&mut stages::VerifyPersistInput {
-                    state,
-                    conn: tx,
-                    run: &run,
-                    diff_snap: &diff_snap,
-                    checks: &checks,
-                    check_logs: &check_logs,
-                    report: &report,
-                    events_out: &mut events_out,
-                    now,
-                })?;
-            let working_run =
-                Self::transition_to_verification(tx, &run, &diff_snap, &mut events_out, now)?;
-
-            let outcome = if verification_passed {
-                Self::finalize_pass_for_acceptance(stages::PassFinalizeInput {
-                    state,
-                    conn: tx,
-                    working_run: &working_run,
-                    task_opt: task_opt.as_ref(),
-                    project_opt: project_opt.as_ref(),
-                    diff_snap: &diff_snap,
-                    refs: (diff_ref, verif_log_ref, wasm_ref),
-                    report,
-                    events_out: &mut events_out,
-                    now,
-                })?
-            } else {
-                Self::handle_verification_failure(stages::FailureHandleInput {
-                    conn: tx,
-                    working_run: &working_run,
-                    task_opt: task_opt.as_ref(),
-                    checks: &checks,
-                    refs: (diff_ref, verif_log_ref, wasm_ref),
-                    report,
-                    elapsed_ms_override: options.elapsed_ms_override,
-                    events_out: &mut events_out,
-                    now,
-                })?
-            };
-            Ok::<_, PipelineError>((outcome, events_out))
-        })?;
-        drop(conn);
+        let (outcome, buffered_events, team_lease, started_at_implementation, task_before) =
+            Self::commit_verification_tx(VerifyCommitInput {
+                state,
+                run_id,
+                project_opt: project_opt.as_ref(),
+                diff_snap: &diff_snap,
+                checks: &checks,
+                check_logs: &check_logs,
+                report,
+                verification_passed,
+                elapsed_ms_override: options.elapsed_ms_override,
+                now,
+            })?;
 
         for (session_id, stored) in buffered_events {
             state.publish_events(&session_id, std::slice::from_ref(&stored));
@@ -303,6 +290,89 @@ impl WorkflowPipeline {
             .await?;
         }
         Ok(outcome)
+    }
+
+    fn commit_verification_tx(
+        input: VerifyCommitInput<'_>,
+    ) -> Result<VerifyCommitOutput, PipelineError> {
+        let VerifyCommitInput {
+            state,
+            run_id,
+            project_opt,
+            diff_snap,
+            checks,
+            check_logs,
+            report,
+            verification_passed,
+            elapsed_ms_override,
+            now,
+        } = input;
+        let mut conn = open_sqlite(&state.db_path)?;
+        with_immediate_tx(&mut conn, |tx| {
+            let fresh_run = SessionStore::get_run(tx, run_id)?
+                .ok_or_else(|| StorageError::RunNotFound(run_id.clone()))?;
+            let fresh_task = match &fresh_run.task_id {
+                Some(tid) => TaskStore::get_task(tx, tid)?,
+                None => None,
+            };
+            let fresh_lease =
+                team_report::resolve_team_run_lease(tx, &fresh_run, fresh_task.as_ref())?;
+            let started_at_impl = fresh_run.workflow_stage == WorkflowStage::Implementation;
+            let fresh_task_before = fresh_task.as_ref().map(team_report::TaskBeforeMeta::from);
+            let is_team_managed = fresh_lease.is_some();
+
+            let mut events_out = Vec::new();
+            let (diff_ref, verif_log_ref, wasm_ref) =
+                Self::persist_verification_artifacts(&mut stages::VerifyPersistInput {
+                    state,
+                    conn: tx,
+                    run: &fresh_run,
+                    diff_snap,
+                    checks,
+                    check_logs,
+                    report: &report,
+                    events_out: &mut events_out,
+                    now,
+                })?;
+            let working_run =
+                Self::transition_to_verification(tx, &fresh_run, diff_snap, &mut events_out, now)?;
+
+            let outcome = if verification_passed {
+                Self::finalize_pass_for_acceptance(stages::PassFinalizeInput {
+                    state,
+                    conn: tx,
+                    working_run: &working_run,
+                    task_opt: fresh_task.as_ref(),
+                    project_opt,
+                    diff_snap,
+                    refs: (diff_ref, verif_log_ref, wasm_ref),
+                    report,
+                    is_team_managed,
+                    events_out: &mut events_out,
+                    now,
+                })?
+            } else {
+                Self::handle_verification_failure(stages::FailureHandleInput {
+                    conn: tx,
+                    working_run: &working_run,
+                    task_opt: fresh_task.as_ref(),
+                    checks,
+                    refs: (diff_ref, verif_log_ref, wasm_ref),
+                    report,
+                    elapsed_ms_override,
+                    is_team_managed,
+                    events_out: &mut events_out,
+                    now,
+                })?
+            };
+            Ok::<_, PipelineError>((
+                outcome,
+                events_out,
+                fresh_lease,
+                started_at_impl,
+                fresh_task_before,
+            ))
+        })
     }
 
     fn run_wasm_validation(

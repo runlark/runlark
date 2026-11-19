@@ -185,6 +185,13 @@ export async function handleRunlarkBoardWebRequest(
     if (signal.aborted || res.writableEnded) {
       return true;
     }
+    if (error instanceof URIError) {
+      sendJson(res, 400, {
+        error: "invalid_uri",
+        message: "Invalid percent-encoded path segment",
+      });
+      return true;
+    }
     if (error instanceof DaemonHttpError) {
       sendJson(res, error.status, error.body ?? { error: "daemon_error", message: error.message });
       return true;

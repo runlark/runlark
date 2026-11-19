@@ -18,6 +18,7 @@ fn resolve_token_secret(
     required: bool,
     label: &str,
 ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+    let explicit_file_or_stdin = input.token_stdin || input.token_file.is_some();
     let raw = if input.token_stdin {
         let mut buf = String::new();
         std::io::stdin().read_to_string(&mut buf)?;
@@ -39,6 +40,9 @@ fn resolve_token_secret(
     };
 
     let trimmed = raw.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    if explicit_file_or_stdin && trimmed.is_none() {
+        return Err(format!("{label} provided via --token-file/--token-stdin is empty").into());
+    }
     if required && trimmed.is_none() {
         return Err(format!(
             "{label} is required: supply --token-stdin, --token-file, {}, or --token",

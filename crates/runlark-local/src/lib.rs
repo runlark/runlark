@@ -16,6 +16,7 @@ pub mod project_store;
 pub mod question_store;
 pub mod reconciliation;
 pub mod run_queries;
+pub mod runner_buffer_store;
 pub mod schema;
 pub mod session_store;
 pub mod sync_outbox;
@@ -46,12 +47,11 @@ pub use run_queries::{
     BoardCommandRecord, BoardIntentOutcome, BoardIntentParams, EnqueueTaskRunOutcome,
     EnqueueTaskRunParams, RunQueries,
 };
+pub use runner_buffer_store::{BufferedRunnerReport, RunnerBufferStore};
 pub use rusqlite::Connection;
 pub use schema::initialize_schema;
 pub use session_store::SessionStore;
 pub use sync_outbox::{SyncOutboxEntry, SyncOutboxStatus, SyncOutboxStore, SyncedCasStore};
 pub use sync_store::{ProjectSyncBinding, PromotionBundle, SyncStore, TeamWorkspaceRecord};
 pub use task_store::TaskStore;
-pub use team_auth_store::{
-    BufferedRunnerReport, RunnerBufferStore, TeamAuthSession, TeamAuthStore,
-};
+pub use team_auth_store::{TeamAuthSession, TeamAuthStore};

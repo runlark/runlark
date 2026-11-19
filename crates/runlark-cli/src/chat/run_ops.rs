@@ -90,15 +90,10 @@ pub(super) async fn exec_stop_run(
         }
     }
 
-    let conn = state.get_connection().map_err(|e| {
-        api_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "storage_error",
-            e.to_string(),
-        )
-    })?;
-    let updated_run = SessionStore::get_run(&conn, run_id)
-        .map_err(storage_error_to_http)?
+    let updated_run = state
+        .get_connection()
+        .ok()
+        .and_then(|conn| SessionStore::get_run(&conn, run_id).ok().flatten())
         .unwrap_or(run);
     Ok((
         StatusCode::OK,
