@@ -5,9 +5,9 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use runlark_domain::{
     BoardCommand, BudgetPolicy, CommandId, CreateProjectCommand, PolicyDigest, Project, ProjectId,
-    Timestamp,
+    ProjectOwnershipMode, Timestamp,
 };
-use runlark_local::{BoardCommandOutcome, BoardStore, ProjectStore};
+use runlark_local::{BoardCommandOutcome, BoardStore, ProjectStore, SyncStore};
 use runlark_wasm::sha256_hex;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -38,6 +38,8 @@ pub struct ProjectResponse {
     pub max_concurrent_runs: u32,
     pub budget_policy: BudgetPolicy,
     pub policy_digest: String,
+    pub ownership: ProjectOwnershipMode,
+    pub last_cursor_seq: u64,
     pub revision: u64,
     pub created_at: u64,
     pub updated_at: u64,
@@ -53,10 +55,28 @@ impl From<Project> for ProjectResponse {
             max_concurrent_runs: p.max_concurrent_runs,
             budget_policy: p.budget_policy,
             policy_digest: p.policy_digest.0,
+            ownership: ProjectOwnershipMode::SoloLocal,
+            last_cursor_seq: 0,
             revision: p.revision.0,
             created_at: p.created_at.0,
             updated_at: p.updated_at.0,
         }
+    }
+}
+
+impl ProjectResponse {
+    pub(crate) fn from_project_with_binding(
+        conn: &runlark_local::Connection,
+        project: Project,
+    ) -> Result<Self, ApiError> {
+        let binding =
+            SyncStore::get_project_binding(conn, &project.id).map_err(storage_error_to_http)?;
+        let mut resp = Self::from(project);
+        if let Some(b) = binding {
+            resp.ownership = b.ownership_mode;
+            resp.last_cursor_seq = b.last_cursor_seq.0;
+        }
+        Ok(resp)
     }
 }
 
@@ -75,9 +95,11 @@ pub async fn list_projects(
         )
     })?;
     let projects = ProjectStore::list_projects(&conn).map_err(storage_error_to_http)?;
-    Ok(Json(
-        projects.into_iter().map(ProjectResponse::from).collect(),
-    ))
+    let mut out = Vec::with_capacity(projects.len());
+    for p in projects {
+        out.push(ProjectResponse::from_project_with_binding(&conn, p)?);
+    }
+    Ok(Json(out))
 }
 
 /// Registers a new project workspace via `BoardCommand::CreateProject`.
@@ -189,5 +211,7 @@ pub async fn get_project(
                 format!("Project not found: {project_id}"),
             )
         })?;
-    Ok(Json(ProjectResponse::from(project)))
+    Ok(Json(ProjectResponse::from_project_with_binding(
+        &conn, project,
+    )?))
 }

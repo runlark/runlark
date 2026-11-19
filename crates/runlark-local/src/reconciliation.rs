@@ -5,6 +5,7 @@ use crate::error::StorageError;
 use crate::event_store::EventStore;
 use crate::question_store::QuestionStore;
 use crate::session_store::SessionStore;
+use crate::sync_store::LOCAL_OWNED_RUN_PREDICATE;
 use runlark_domain::{
     ArtifactDigest, CommandId, DomainEvent, Question, RunId, RunStatus, SessionId, TaskId,
     Timestamp,
@@ -36,11 +37,16 @@ impl ReconciliationEngine {
     /// # Errors
     /// Returns [`StorageError`] if SQL queries fail.
     pub fn scan_inflight(conn: &Connection) -> Result<InflightState, StorageError> {
-        let mut stmt = conn.prepare(concat!(
-            "SELECT run_id, session_id, status FROM runs ",
-            "WHERE status IN ('running', 'cancel_requested') ",
-            "OR (status = 'queued' AND task_id IS NULL)"
-        ))?;
+        let active_sql = format!(
+            concat!(
+                "SELECT r.run_id, r.session_id, r.status FROM runs r ",
+                "WHERE (r.status IN ('running', 'cancel_requested') ",
+                "OR (r.status = 'queued' AND r.task_id IS NULL)) ",
+                "AND {}"
+            ),
+            LOCAL_OWNED_RUN_PREDICATE
+        );
+        let mut stmt = conn.prepare(&active_sql)?;
         let active_runs = stmt
             .query_map([], |row| {
                 let r_id: String = row.get(0)?;

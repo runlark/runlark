@@ -187,4 +187,184 @@ export class DaemonBoardClient {
   validatePlugin(body: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     return this.request("POST", "/api/v1/plugins/validate", body, signal);
   }
+
+  teamLogin(body: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    return this.request("POST", "/api/v1/team/login", body, signal);
+  }
+
+  getTeamStatus(signal?: AbortSignal): Promise<unknown> {
+    return this.request("GET", "/api/v1/team/status", undefined, signal);
+  }
+
+  syncTeam(body?: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    return this.request("POST", "/api/v1/team/sync", body ?? {}, signal);
+  }
+
+  createWorkspace(body: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    return this.request("POST", "/api/v1/team/workspaces", body, signal);
+  }
+
+  getWorkspace(wid: string, signal?: AbortSignal): Promise<unknown> {
+    return this.request(
+      "GET",
+      `/api/v1/team/workspaces/${encodeURIComponent(wid)}`,
+      undefined,
+      signal,
+    );
+  }
+
+  listWorkspaceMembers(wid: string, signal?: AbortSignal): Promise<unknown> {
+    return this.request(
+      "GET",
+      `/api/v1/team/workspaces/${encodeURIComponent(wid)}/members`,
+      undefined,
+      signal,
+    );
+  }
+
+  updateWorkspaceMemberRole(
+    wid: string,
+    uid: string,
+    body: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    return this.request(
+      "PATCH",
+      `/api/v1/team/workspaces/${encodeURIComponent(wid)}/members/${encodeURIComponent(uid)}`,
+      body,
+      signal,
+    );
+  }
+
+  createInvitation(
+    wid: string,
+    body: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    return this.request(
+      "POST",
+      `/api/v1/team/workspaces/${encodeURIComponent(wid)}/invitations`,
+      body,
+      signal,
+    );
+  }
+
+  revokeInvitation(wid: string, inviteId: string, signal?: AbortSignal): Promise<unknown> {
+    return this.request(
+      "POST",
+      `/api/v1/team/workspaces/${encodeURIComponent(wid)}/invitations/${encodeURIComponent(inviteId)}/revoke`,
+      {},
+      signal,
+    );
+  }
+
+  acceptInvitation(body: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    return this.request("POST", "/api/v1/team/invitations/accept", body, signal);
+  }
+
+  promoteProjectToTeam(
+    projectId: string,
+    body: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    return this.request(
+      "POST",
+      `/api/v1/projects/${encodeURIComponent(projectId)}/promote-team`,
+      body,
+      signal,
+    );
+  }
+
+  listDrafts(projectId?: string, signal?: AbortSignal): Promise<unknown> {
+    const q = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+    return this.request("GET", `/api/v1/team/drafts${q}`, undefined, signal);
+  }
+
+  createDraft(body: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    return this.request("POST", "/api/v1/team/drafts", body, signal);
+  }
+
+  retryDraft(
+    draftId: string,
+    body?: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    return this.request(
+      "POST",
+      `/api/v1/team/drafts/${encodeURIComponent(draftId)}/retry`,
+      body ?? {},
+      signal,
+    );
+  }
+
+  deleteDraft(draftId: string, signal?: AbortSignal): Promise<{ readonly status: number }> {
+    return this.requestWithStatus(
+      "DELETE",
+      `/api/v1/team/drafts/${encodeURIComponent(draftId)}`,
+      undefined,
+      signal,
+    );
+  }
+
+  listTaskComments(taskId: string, signal?: AbortSignal): Promise<unknown> {
+    return this.request(
+      "GET",
+      `/api/v1/tasks/${encodeURIComponent(taskId)}/comments`,
+      undefined,
+      signal,
+    );
+  }
+
+  addTaskComment(
+    taskId: string,
+    body: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<{ readonly status: number; readonly data: unknown }> {
+    return this.requestWithStatus(
+      "POST",
+      `/api/v1/tasks/${encodeURIComponent(taskId)}/comments`,
+      body,
+      signal,
+    );
+  }
+
+  listRunners(workspaceId?: string, signal?: AbortSignal): Promise<unknown> {
+    const q = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : "";
+    return this.request("GET", `/api/v1/team/runners${q}`, undefined, signal);
+  }
+
+  registerRunner(body: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    return this.request("POST", "/api/v1/team/runners/register", body, signal);
+  }
+
+  getRunnerStatus(workspaceId?: string, signal?: AbortSignal): Promise<unknown> {
+    const q = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : "";
+    return this.request("GET", `/api/v1/team/runners/status${q}`, undefined, signal);
+  }
+
+  assignRunner(
+    runId: string,
+    body: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    return this.request(
+      "POST",
+      `/api/v1/team/runs/${encodeURIComponent(runId)}/assign`,
+      body,
+      signal,
+    );
+  }
+
+  cancelUnreachableRun(
+    runId: string,
+    body: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    return this.request(
+      "POST",
+      `/api/v1/team/runs/${encodeURIComponent(runId)}/cancel-unreachable`,
+      body,
+      signal,
+    );
+  }
 }

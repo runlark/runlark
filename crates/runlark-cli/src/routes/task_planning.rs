@@ -1,11 +1,13 @@
 use crate::repair::WorkflowPipeline;
 use crate::routes::error::{ApiError, api_error, storage_error_to_http};
+use crate::routes::team_gate;
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use runlark_domain::{
-    BoardCommand, CommandId, DomainEvent, Revision, Task, TaskId, TaskStage, Timestamp,
+    ActorRole, AddCommentCommand, BoardCommand, CommandId, CommentId, DomainEvent,
+    MoveTaskStageCommand, Revision, Task, TaskId, TaskStage, TeamCommand, Timestamp,
     UpdateTaskPlanCommand, WorkflowStage,
 };
 use runlark_local::{
@@ -60,6 +62,10 @@ pub async fn clarify_task(
 
     let task_id = TaskId::from(id);
     let now = Timestamp(AppState::current_timestamp_ms());
+    if let Some((task, ctx)) = team_gate::resolve_task_team_context(&state, &task_id)? {
+        return clarify_team_task(&state, &ctx, &task, req, now).await;
+    }
+
     let tx_out = apply_clarification_tx(&state, &task_id, &req, now)?;
     if let Some(ref sid) = tx_out.session_id
         && !tx_out.events.is_empty()
@@ -70,7 +76,7 @@ pub async fn clarify_task(
     if req.advance_to_plan
         && let Some(ref rid) = tx_out.run_id
     {
-        advance_clarification_run(&state, rid, now)?;
+        advance_clarification_run(&state, rid, now).await?;
     }
 
     let conn = state.get_connection().map_err(|e| {
@@ -197,7 +203,7 @@ fn append_clarify_events(
     Ok(events)
 }
 
-fn advance_clarification_run(
+async fn advance_clarification_run(
     state: &AppState,
     rid: &runlark_domain::RunId,
     now: Timestamp,
@@ -215,6 +221,7 @@ fn advance_clarification_run(
     drop(conn);
     if run_stage == Some(WorkflowStage::Clarification) {
         WorkflowPipeline::advance_stage_with_task(state, rid, WorkflowStage::Plan, now)
+            .await
             .map_err(|e| api_error(StatusCode::CONFLICT, "transition_conflict", e.to_string()))?;
     }
     Ok(())
@@ -239,6 +246,10 @@ pub async fn plan_task(
 
     let task_id = TaskId::from(id);
     let now = Timestamp(AppState::current_timestamp_ms());
+    if let Some((task, ctx)) = team_gate::resolve_task_team_context(&state, &task_id)? {
+        return update_team_task_plan(&state, &ctx, &task, req, now).await;
+    }
+
     let (applied, active_run_id, wf_stage) = {
         let mut conn = state.get_connection().map_err(|e| {
             api_error(
@@ -350,6 +361,7 @@ async fn apply_plan_approval(
                 WorkflowStage::Implementation,
                 now,
             )
+            .await
             .map_err(|e| api_error(StatusCode::CONFLICT, "transition_conflict", e.to_string()))?;
         }
     } else if wf_stage == WorkflowStage::Plan {
@@ -390,4 +402,110 @@ async fn apply_plan_approval(
     state.notify_scheduler();
     tokio::task::yield_now().await;
     Ok(())
+}
+
+async fn clarify_team_task(
+    state: &AppState,
+    ctx: &team_gate::TeamProjectContext,
+    task: &Task,
+    req: ClarifyTaskRequest,
+    now: Timestamp,
+) -> Result<Json<ClarifyTaskResponse>, ApiError> {
+    let comment_cmd = TeamCommand::AddComment(AddCommentCommand {
+        command_id: CommandId::from(format!("cmd_clarify_cmt_{}", Uuid::new_v4().simple())),
+        comment_id: CommentId::from(format!("cmt_clarify_{}", Uuid::new_v4().simple())),
+        task_id: task.id.clone(),
+        run_id: task.active_run_id.clone(),
+        body: format!("Clarification: {}", req.clarification.trim()),
+        created_at: now,
+    });
+    team_gate::submit_team_command_checked(state, ctx, &comment_cmd).await?;
+
+    if req.advance_to_plan && task.stage == TaskStage::Inbox {
+        let move_cmd = TeamCommand::MoveTaskStage(MoveTaskStageCommand {
+            command_id: CommandId::from(format!("cmd_clarify_mv_{}", Uuid::new_v4().simple())),
+            task_id: task.id.clone(),
+            target_stage: TaskStage::Ready,
+            actor: ActorRole::Human(ctx.display_name.clone()),
+            expected_revision: task.revision,
+            created_at: now,
+        });
+        team_gate::submit_team_command_checked(state, ctx, &move_cmd).await?;
+    }
+
+    let conn = state.get_connection().map_err(|e| {
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "storage_error",
+            e.to_string(),
+        )
+    })?;
+    let updated = TaskStore::get_task(&conn, &task.id)
+        .map_err(storage_error_to_http)?
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::NOT_FOUND,
+                "task_not_found",
+                format!("Task not found: {}", task.id),
+            )
+        })?;
+    let workflow_stage = updated.workflow_stage;
+    Ok(Json(ClarifyTaskResponse {
+        task: updated,
+        workflow_stage,
+    }))
+}
+
+async fn update_team_task_plan(
+    state: &AppState,
+    ctx: &team_gate::TeamProjectContext,
+    task: &Task,
+    req: PlanTaskRequest,
+    now: Timestamp,
+) -> Result<Json<Task>, ApiError> {
+    if req.approve {
+        let _ = team_gate::validate_team_plan_approval_eligible(state, task)?;
+    }
+    let command_id = CommandId::from(
+        req.command_id
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| format!("cmd_plan_{}", Uuid::new_v4().simple())),
+    );
+    let plan_cmd = TeamCommand::UpdateTaskPlan(UpdateTaskPlanCommand {
+        command_id,
+        task_id: task.id.clone(),
+        plan_text: req.plan_text,
+        expected_revision: Revision(req.expected_revision.unwrap_or(task.revision.0)),
+        created_at: now,
+    });
+    team_gate::submit_team_command_checked(state, ctx, &plan_cmd).await?;
+    let conn = state.get_connection().map_err(|e| {
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "storage_error",
+            e.to_string(),
+        )
+    })?;
+    let updated = TaskStore::get_task(&conn, &task.id)
+        .map_err(storage_error_to_http)?
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::NOT_FOUND,
+                "task_not_found",
+                format!("Task not found: {}", task.id),
+            )
+        })?;
+    drop(conn);
+    if req.approve {
+        let approved = team_gate::execute_team_approve_plan(
+            state,
+            ctx,
+            &updated,
+            ctx.display_name.clone(),
+            now,
+        )
+        .await?;
+        return Ok(Json(approved));
+    }
+    Ok(Json(updated))
 }

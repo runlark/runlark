@@ -123,6 +123,9 @@ fn pipeline_error_to_http(err: PipelineError) -> ApiError {
             api_error(StatusCode::CONFLICT, "transition_conflict", e.to_string())
         }
         PipelineError::NotFound(msg) => api_error(StatusCode::NOT_FOUND, "not_found", msg),
+        PipelineError::TeamFencing(msg) => {
+            api_error(StatusCode::CONFLICT, "team_fencing_conflict", msg)
+        }
     }
 }
 

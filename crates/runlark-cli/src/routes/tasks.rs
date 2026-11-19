@@ -3,13 +3,14 @@ use crate::routes::error::{ApiError, api_error, deterministic_id, storage_error_
 pub use crate::routes::task_planning::{
     ClarifyTaskRequest, ClarifyTaskResponse, PlanTaskRequest, clarify_task, plan_task,
 };
+use crate::routes::team_gate;
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use runlark_domain::{
     ActorRole, BoardCommand, BudgetPolicy, CommandId, CreateTaskCommand, MoveTaskStageCommand,
-    ProjectId, Revision, Task, TaskId, TaskKind, TaskStage, Timestamp,
+    ProjectId, Revision, Task, TaskId, TaskKind, TaskStage, TeamCommand, Timestamp,
 };
 use runlark_local::{BoardCommandOutcome, BoardStore, ProjectStore, RunQueries, TaskStore};
 use serde::Deserialize;
@@ -108,7 +109,7 @@ pub async fn create_task(
         ));
     }
 
-    let mut conn = state.get_connection().map_err(|e| {
+    let conn = state.get_connection().map_err(|e| {
         api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
@@ -155,18 +156,31 @@ pub async fn create_task(
             }),
     );
     let now = Timestamp(AppState::current_timestamp_ms());
-    let cmd = BoardCommand::CreateTask(CreateTaskCommand {
+    let create_cmd = CreateTaskCommand {
         command_id,
         task_id: task_id.clone(),
-        project_id,
+        project_id: project_id.clone(),
         title: req.title,
         description: req.description,
         kind: req.kind,
         base_ref: req.base_ref,
         budget_override: req.budget_override,
         created_at: now,
-    });
+    };
 
+    drop(conn);
+    if let Some(ctx) = team_gate::resolve_project_team_context(&state, &project_id)? {
+        return create_team_task_checked(&state, &ctx, create_cmd).await;
+    }
+
+    let mut conn = state.get_connection().map_err(|e| {
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "storage_error",
+            e.to_string(),
+        )
+    })?;
+    let cmd = BoardCommand::CreateTask(create_cmd);
     let outcome =
         BoardStore::apply_board_command(&mut conn, &cmd, now).map_err(storage_error_to_http)?;
     let task = TaskStore::get_task(&conn, &task_id)
@@ -230,7 +244,7 @@ pub async fn move_task(
     Path(id): Path<String>,
     Json(req): Json<MoveTaskRequest>,
 ) -> Result<Json<Task>, ApiError> {
-    let mut conn = state.get_connection().map_err(|e| {
+    let conn = state.get_connection().map_err(|e| {
         api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
@@ -271,14 +285,46 @@ pub async fn move_task(
     let expected_revision =
         prior_rev.unwrap_or_else(|| Revision(req.expected_revision.unwrap_or(task.revision.0)));
     let now = Timestamp(AppState::current_timestamp_ms());
-    let cmd = BoardCommand::MoveTaskStage(MoveTaskStageCommand {
+    let move_cmd = MoveTaskStageCommand {
         command_id,
         task_id: task_id.clone(),
         target_stage: req.stage,
         actor,
         expected_revision,
         created_at: now,
-    });
+    };
+
+    drop(conn);
+    if let Some((_, ctx)) = team_gate::resolve_task_team_context(&state, &task_id)? {
+        let team_cmd = TeamCommand::MoveTaskStage(move_cmd);
+        team_gate::submit_team_command_checked(&state, &ctx, &team_cmd).await?;
+        let conn = state.get_connection().map_err(|e| {
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                e.to_string(),
+            )
+        })?;
+        let updated = TaskStore::get_task(&conn, &task_id)
+            .map_err(storage_error_to_http)?
+            .ok_or_else(|| {
+                api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "storage_error",
+                    "team task missing after move",
+                )
+            })?;
+        return Ok(Json(updated));
+    }
+
+    let mut conn = state.get_connection().map_err(|e| {
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "storage_error",
+            e.to_string(),
+        )
+    })?;
+    let cmd = BoardCommand::MoveTaskStage(move_cmd);
     BoardStore::apply_board_command(&mut conn, &cmd, now).map_err(storage_error_to_http)?;
     let updated = TaskStore::get_task(&conn, &task_id)
         .map_err(storage_error_to_http)?
@@ -290,4 +336,36 @@ pub async fn move_task(
             )
         })?;
     Ok(Json(updated))
+}
+
+async fn create_team_task_checked(
+    state: &AppState,
+    ctx: &team_gate::TeamProjectContext,
+    create_cmd: CreateTaskCommand,
+) -> Result<(StatusCode, Json<Task>), ApiError> {
+    let task_id = create_cmd.task_id.clone();
+    let team_cmd = TeamCommand::CreateTask(create_cmd);
+    let res = team_gate::submit_team_command_checked(state, ctx, &team_cmd).await?;
+    let conn = state.get_connection().map_err(|e| {
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "storage_error",
+            e.to_string(),
+        )
+    })?;
+    let task = TaskStore::get_task(&conn, &task_id)
+        .map_err(storage_error_to_http)?
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                "team task missing after sync",
+            )
+        })?;
+    let status = if res.idempotent_replay {
+        StatusCode::OK
+    } else {
+        StatusCode::CREATED
+    };
+    Ok((status, Json(task)))
 }

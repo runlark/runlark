@@ -34,14 +34,38 @@ pub fn configure_connection(conn: &Connection) -> Result<(), StorageError> {
     Ok(())
 }
 
-/// Opens a `SQLite` database at the specified path with standard concurrency pragmas.
+/// Opens a `SQLite` database at the specified path with standard concurrency pragmas and
+/// owner-only file permissions (`0600`) on Unix.
 ///
 /// # Errors
 /// Returns `StorageError` if connection opening or pragma setup fails.
 pub fn open_sqlite<P: AsRef<Path>>(path: P) -> Result<Connection, StorageError> {
-    let conn = Connection::open(path)?;
+    let path_ref = path.as_ref();
+    let conn = Connection::open(path_ref)?;
+    #[cfg(unix)]
+    restrict_sqlite_permissions(path_ref);
     configure_connection(&conn)?;
+    #[cfg(unix)]
+    restrict_sqlite_sidecars(path_ref);
     Ok(conn)
+}
+
+#[cfg(unix)]
+fn restrict_sqlite_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if path.is_file() {
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+}
+
+#[cfg(unix)]
+fn restrict_sqlite_sidecars(path: &Path) {
+    let base = path.as_os_str().to_os_string();
+    for suffix in ["-wal", "-shm"] {
+        let mut sidecar = base.clone();
+        sidecar.push(suffix);
+        restrict_sqlite_permissions(Path::new(&sidecar));
+    }
 }
 
 /// Opens an in-memory `SQLite` database for ephemeral test suites.

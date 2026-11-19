@@ -1,3 +1,4 @@
+use crate::team_sync::TeamServerError;
 use axum::Json;
 use axum::http::StatusCode;
 use runlark_domain::{RunStatus, TransitionError};
@@ -33,46 +34,19 @@ pub fn api_error(status: StatusCode, error: &'static str, message: impl Into<Str
 
 /// Maps a [`StorageError`] (including domain [`TransitionError`]) into a structured HTTP status and JSON body.
 pub fn storage_error_to_http(err: StorageError) -> ApiError {
+    if let Some((code, msg)) = storage_not_found_pair(&err) {
+        return api_error(StatusCode::NOT_FOUND, code, msg);
+    }
     match err {
         StorageError::CommandPayloadConflict(id) => api_error(
             StatusCode::CONFLICT,
             "command_payload_conflict",
             format!("Command payload conflict: command {id} exists with differing payload"),
         ),
-        StorageError::SessionNotFound(id) => api_error(
-            StatusCode::NOT_FOUND,
-            "session_not_found",
-            format!("Session not found: {id}"),
-        ),
-        StorageError::RunNotFound(id) => api_error(
-            StatusCode::NOT_FOUND,
-            "run_not_found",
-            format!("Run not found: {id}"),
-        ),
-        StorageError::QuestionNotFound(id) => api_error(
-            StatusCode::NOT_FOUND,
-            "question_not_found",
-            format!("Question not found: {id}"),
-        ),
-        StorageError::ProjectNotFound(id) => api_error(
-            StatusCode::NOT_FOUND,
-            "project_not_found",
-            format!("Project not found: {id}"),
-        ),
-        StorageError::TaskNotFound(id) => api_error(
-            StatusCode::NOT_FOUND,
-            "task_not_found",
-            format!("Task not found: {id}"),
-        ),
-        StorageError::DecisionNotFound(id) => api_error(
-            StatusCode::NOT_FOUND,
-            "decision_not_found",
-            format!("Decision not found: {id}"),
-        ),
-        StorageError::ArtifactNotFound(digest) => api_error(
-            StatusCode::NOT_FOUND,
-            "artifact_not_found",
-            format!("Artifact not found: {digest}"),
+        StorageError::CursorGap { expected, actual } => api_error(
+            StatusCode::CONFLICT,
+            "cursor_gap",
+            format!("Workspace cursor gap: expected {expected}, got {actual}"),
         ),
         StorageError::CorruptArtifact { digest, .. } => api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -119,6 +93,76 @@ pub fn storage_error_to_http(err: StorageError) -> ApiError {
             "serialization_error",
             e.to_string(),
         ),
+        _ => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "storage_error",
+            err.to_string(),
+        ),
+    }
+}
+
+fn storage_not_found_pair(err: &StorageError) -> Option<(&'static str, String)> {
+    match err {
+        StorageError::SessionNotFound(id) => {
+            Some(("session_not_found", format!("Session not found: {id}")))
+        }
+        StorageError::RunNotFound(id) => Some(("run_not_found", format!("Run not found: {id}"))),
+        StorageError::QuestionNotFound(id) => {
+            Some(("question_not_found", format!("Question not found: {id}")))
+        }
+        StorageError::ProjectNotFound(id) => {
+            Some(("project_not_found", format!("Project not found: {id}")))
+        }
+        StorageError::TaskNotFound(id) => Some(("task_not_found", format!("Task not found: {id}"))),
+        StorageError::DecisionNotFound(id) => {
+            Some(("decision_not_found", format!("Decision not found: {id}")))
+        }
+        StorageError::DraftNotFound(id) => {
+            Some(("draft_not_found", format!("Offline draft not found: {id}")))
+        }
+        StorageError::SyncOutboxNotFound(id) => Some((
+            "sync_outbox_not_found",
+            format!("Sync outbox command not found: {id}"),
+        )),
+        StorageError::ArtifactNotFound(digest) => Some((
+            "artifact_not_found",
+            format!("Artifact not found: {digest}"),
+        )),
+        _ => None,
+    }
+}
+
+/// Maps a [`TeamServerError`] into a structured daemon HTTP status and JSON body.
+pub fn team_server_error_to_http(err: TeamServerError) -> ApiError {
+    match err {
+        TeamServerError::Offline(msg) => {
+            api_error(StatusCode::SERVICE_UNAVAILABLE, "team_server_offline", msg)
+        }
+        TeamServerError::Conflict {
+            message,
+            current_revision,
+            ..
+        } => (
+            StatusCode::CONFLICT,
+            Json(ApiErrorBody {
+                error: "team_conflict",
+                message,
+                expected_revision: None,
+                actual_revision: current_revision,
+            }),
+        ),
+        TeamServerError::Unauthorized(msg) => {
+            api_error(StatusCode::UNAUTHORIZED, "team_unauthorized", msg)
+        }
+        TeamServerError::Forbidden(msg) => api_error(StatusCode::FORBIDDEN, "team_forbidden", msg),
+        TeamServerError::NotFound(msg) => api_error(StatusCode::NOT_FOUND, "team_not_found", msg),
+        TeamServerError::BadRequest(msg) => {
+            api_error(StatusCode::BAD_REQUEST, "team_bad_request", msg)
+        }
+        TeamServerError::Storage(e) => storage_error_to_http(e),
+        TeamServerError::Json(e) => {
+            api_error(StatusCode::BAD_GATEWAY, "team_json_error", e.to_string())
+        }
     }
 }
 

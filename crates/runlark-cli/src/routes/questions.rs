@@ -1,4 +1,5 @@
 use crate::routes::error::{ApiError, api_error, run_status_str, storage_error_to_http};
+use crate::routes::team_gate;
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -157,16 +158,66 @@ pub async fn answer_question(
     Path(id): Path<String>,
     Json(req): Json<AnswerQuestionRequest>,
 ) -> Result<(StatusCode, Json<AnswerQuestionResponse>), ApiError> {
-    let mut conn = state.get_connection().map_err(|e| {
+    let question_id = QuestionId::from(id);
+    let now = AppState::current_timestamp_ms();
+    let cmd = build_answer_question_cmd(&state, &question_id, req, Timestamp(now))?;
+
+    let team_ctx = team_gate::resolve_session_command_team_context(
+        &state,
+        &SessionCommand::AnswerQuestion(cmd.clone()),
+    )?
+    .map(|t| t.context);
+    if let Some(ref ctx) = team_ctx {
+        team_gate::verify_server_reachable_and_synced(&state, ctx).await?;
+    }
+
+    let command_id = cmd.command_id.clone();
+    let run_id = cmd.run_id.clone();
+    let outcome = {
+        let mut conn = state.get_connection().map_err(|e| {
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "storage_error",
+                e.to_string(),
+            )
+        })?;
+        LocalStore::answer_question(&mut conn, cmd, Timestamp(now))
+            .map_err(storage_error_to_http)?
+    };
+    if matches!(outcome, CommandApplyOutcome::Applied { .. })
+        && let Some(ref ctx) = team_ctx
+    {
+        team_gate::sync_team_run_resumed_if_leased(
+            &state,
+            ctx,
+            &run_id,
+            "question_answered",
+            &serde_json::json!({ "question_id": question_id.0 }).to_string(),
+        )
+        .await;
+    }
+    Ok(format_answer_response(
+        &state,
+        &command_id,
+        &question_id,
+        outcome,
+    ))
+}
+
+fn build_answer_question_cmd(
+    state: &AppState,
+    question_id: &QuestionId,
+    req: AnswerQuestionRequest,
+    now: Timestamp,
+) -> Result<AnswerQuestionCommand, ApiError> {
+    let conn = state.get_connection().map_err(|e| {
         api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
             e.to_string(),
         )
     })?;
-
-    let question_id = QuestionId::from(id);
-    let question = QuestionStore::get_question(&conn, &question_id)
+    let question = QuestionStore::get_question(&conn, question_id)
         .map_err(storage_error_to_http)?
         .ok_or_else(|| {
             api_error(
@@ -175,7 +226,6 @@ pub async fn answer_question(
                 format!("Question not found: {question_id}"),
             )
         })?;
-
     let session = SessionStore::get_session(&conn, &question.session_id)
         .map_err(storage_error_to_http)?
         .ok_or_else(|| {
@@ -186,7 +236,6 @@ pub async fn answer_question(
             )
         })?;
 
-    let now = AppState::current_timestamp_ms();
     let explicit_cmd_id = req.command_id.filter(|s| !s.trim().is_empty());
     let command_id = CommandId::from(
         explicit_cmd_id
@@ -207,19 +256,23 @@ pub async fn answer_question(
     let expected_revision = prior_rev
         .unwrap_or_else(|| Revision(req.expected_revision.unwrap_or(session.current_revision.0)));
 
-    let cmd = AnswerQuestionCommand {
-        command_id: command_id.clone(),
+    Ok(AnswerQuestionCommand {
+        command_id,
         session_id: question.session_id,
         run_id: question.run_id,
         question_id: question_id.clone(),
         answer: req.answer,
         expected_revision,
-        created_at: Timestamp(now),
-    };
+        created_at: now,
+    })
+}
 
-    let outcome = LocalStore::answer_question(&mut conn, cmd, Timestamp(now))
-        .map_err(storage_error_to_http)?;
-
+fn format_answer_response(
+    state: &AppState,
+    command_id: &CommandId,
+    question_id: &QuestionId,
+    outcome: CommandApplyOutcome,
+) -> (StatusCode, Json<AnswerQuestionResponse>) {
     match outcome {
         CommandApplyOutcome::Applied {
             status,
@@ -231,30 +284,30 @@ pub async fn answer_question(
             state.notify_outbox();
             state.notify_dsh_subscriber();
             state.notify_scheduler();
-            Ok((
+            (
                 StatusCode::CREATED,
                 Json(AnswerQuestionResponse {
-                    command_id: command_id.0,
+                    command_id: command_id.0.clone(),
                     status,
-                    question_id: question_id.0,
+                    question_id: question_id.0.clone(),
                     current_revision: session.current_revision.0,
                     run_status: run.as_ref().map(|r| run_status_str(r.status).to_string()),
                 }),
-            ))
+            )
         }
         CommandApplyOutcome::AlreadyExists {
             status,
             session,
             run,
-        } => Ok((
+        } => (
             StatusCode::OK,
             Json(AnswerQuestionResponse {
-                command_id: command_id.0,
+                command_id: command_id.0.clone(),
                 status,
-                question_id: question_id.0,
+                question_id: question_id.0.clone(),
                 current_revision: session.current_revision.0,
                 run_status: run.as_ref().map(|r| run_status_str(r.status).to_string()),
             }),
-        )),
+        ),
     }
 }

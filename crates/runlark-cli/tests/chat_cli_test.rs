@@ -1,7 +1,7 @@
 use reqwest::Client;
 use runlark_cli::{
-    AppState, LocalBridgeEffector, OutboxConfig, OutboxDispatcher, Scheduler, VerificationService,
-    build_router,
+    AppState, DshEndpoint, LocalBridgeEffector, OutboxConfig, OutboxDispatcher, Scheduler,
+    VerificationService, build_router,
 };
 use runlark_local::{initialize_schema, open_sqlite};
 use serde_json::{Value, json};
@@ -287,4 +287,122 @@ async fn assert_cli_and_history(client: &Client, base: &str, run_id: &str) {
     .await
     .expect("join");
     assert!(plugins_out.status.success());
+}
+
+#[test]
+fn dsh_endpoint_log_origin_strips_query_and_userinfo() {
+    let ep = DshEndpoint::parse("http://user:secret@127.0.0.1:4321/?token=tok_123", None);
+    assert_eq!(ep.log_origin(), "http://127.0.0.1:4321");
+    assert_eq!(ep.token.as_deref(), Some("tok_123"));
+
+    let schemeless = DshEndpoint::parse("user:secret@127.0.0.1:4321/path/@org?token=x", None);
+    assert_eq!(schemeless.log_origin(), "127.0.0.1:4321/path/@org");
+
+    let path_at = DshEndpoint::parse("http://127.0.0.1:4321/api/@team", None);
+    assert_eq!(path_at.log_origin(), "http://127.0.0.1:4321/api/@team");
+
+    let pw_at = DshEndpoint::parse("http://user:p@ss@127.0.0.1:4321/api", None);
+    assert_eq!(pw_at.log_origin(), "http://127.0.0.1:4321/api");
+
+    let raw_query_frag = DshEndpoint {
+        origin: "http://user:s@127.0.0.1:4321/api?token=secret#frag".to_string(),
+        ws_mux_url: String::new(),
+        token: None,
+    };
+    assert_eq!(raw_query_frag.log_origin(), "http://127.0.0.1:4321/api");
+}
+
+async fn run_team_login_cli(
+    base: &str,
+    env_token: Option<&str>,
+    extra_args: &[&str],
+) -> std::process::Output {
+    let base = base.to_string();
+    let env_token = env_token.map(ToString::to_string);
+    let extra: Vec<String> = extra_args.iter().map(|s| (*s).to_string()).collect();
+    tokio::task::spawn_blocking(move || {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_runlark"));
+        match env_token {
+            Some(tok) => {
+                cmd.env("RUNLARK_TEAM_TOKEN", tok);
+            }
+            None => {
+                cmd.env_remove("RUNLARK_TEAM_TOKEN");
+            }
+        }
+        cmd.args([
+            "--daemon-url",
+            &base,
+            "--json",
+            "team",
+            "login",
+            "--server",
+            &base,
+        ])
+        .args(&extra)
+        .output()
+        .expect("run cli team login")
+    })
+    .await
+    .expect("join")
+}
+
+#[tokio::test]
+async fn cli_team_login_supports_token_file_and_env_without_argv() {
+    let temp = TempDir::new().expect("temp dir");
+    let token_path = temp.path().join("team.token");
+    fs::write(&token_path, "tok_from_file\n").expect("write token file");
+
+    let app = axum::Router::new()
+        .route(
+            "/api/v1/auth/whoami",
+            axum::routing::get(|| async {
+                axum::Json(json!({ "user_id": "usr_cli", "display_name": "CLI User" }))
+            }),
+        )
+        .route(
+            "/api/v1/team/login",
+            axum::routing::post(|axum::Json(body): axum::Json<Value>| async move {
+                axum::Json(json!({
+                    "user_id": "usr_cli",
+                    "display_name": "CLI User",
+                    "server_url": body["server_url"],
+                    "workspace_id": body["workspace_id"],
+                    "echo_token": body["bearer_token"],
+                }))
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let base = format!("http://{}", listener.local_addr().expect("addr"));
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    let token_str = token_path.to_string_lossy().into_owned();
+    let file_out = run_team_login_cli(&base, None, &["--token-file", &token_str]).await;
+    assert!(
+        file_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&file_out.stderr)
+    );
+    let file_json: Value = serde_json::from_slice(&file_out.stdout).expect("json");
+    assert_eq!(file_json["echo_token"], "tok_from_file");
+
+    let env_out = run_team_login_cli(&base, Some("tok_from_env"), &[]).await;
+    assert!(env_out.status.success());
+    let env_json: Value = serde_json::from_slice(&env_out.stdout).expect("json");
+    assert_eq!(env_json["echo_token"], "tok_from_env");
+
+    let blank_out =
+        run_team_login_cli(&base, Some("tok_env_after_blank_flag"), &["--token", "   "]).await;
+    assert!(blank_out.status.success());
+    let blank_json: Value = serde_json::from_slice(&blank_out.stdout).expect("json");
+    assert_eq!(blank_json["echo_token"], "tok_env_after_blank_flag");
+
+    let missing_out = run_team_login_cli(&base, None, &[]).await;
+    assert!(!missing_out.status.success());
+
+    server.abort();
 }

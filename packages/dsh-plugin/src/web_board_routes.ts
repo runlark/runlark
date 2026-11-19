@@ -40,6 +40,21 @@ export async function handleRunlarkBoardWebRequest(
       return true;
     }
 
+    const projectPromoteMatch = /^\/api\/runlark\/projects\/([^/]+)\/promote-team$/u.exec(path);
+    if (method === "POST" && projectPromoteMatch) {
+      const body = await readJsonBody(req);
+      sendJson(
+        res,
+        200,
+        await boardClient.promoteProjectToTeam(
+          decodeURIComponent(projectPromoteMatch[1]),
+          body,
+          signal,
+        ),
+      );
+      return true;
+    }
+
     const projectMatch = /^\/api\/runlark\/projects\/([^/]+)$/u.exec(path);
     if (method === "GET" && projectMatch) {
       sendJson(res, 200, await boardClient.getProject(decodeURIComponent(projectMatch[1]), signal));
@@ -57,6 +72,21 @@ export async function handleRunlarkBoardWebRequest(
       const body = await readJsonBody(req);
       sendJson(res, 201, await boardClient.createTask(body, signal));
       return true;
+    }
+
+    const taskCommentMatch = /^\/api\/runlark\/tasks\/([^/]+)\/comments$/u.exec(path);
+    if (taskCommentMatch) {
+      const taskId = decodeURIComponent(taskCommentMatch[1]);
+      if (method === "GET") {
+        sendJson(res, 200, await boardClient.listTaskComments(taskId, signal));
+        return true;
+      }
+      if (method === "POST") {
+        const body = await readJsonBody(req);
+        const { status, data } = await boardClient.addTaskComment(taskId, body, signal);
+        sendJson(res, status, data);
+        return true;
+      }
     }
 
     const taskMatch =
@@ -134,9 +164,32 @@ export async function handleRunlarkBoardWebRequest(
       return true;
     }
 
+    if (
+      await handleTeamWebRequest(
+        method,
+        path,
+        url,
+        req,
+        res,
+        boardClient,
+        readJsonBody,
+        sendJson,
+        signal,
+      )
+    ) {
+      return true;
+    }
+
     return false;
   } catch (error) {
     if (signal.aborted || res.writableEnded) {
+      return true;
+    }
+    if (error instanceof URIError) {
+      sendJson(res, 400, {
+        error: "invalid_uri",
+        message: "Invalid percent-encoded path segment",
+      });
       return true;
     }
     if (error instanceof DaemonHttpError) {
@@ -145,4 +198,154 @@ export async function handleRunlarkBoardWebRequest(
     }
     throw error;
   }
+}
+
+async function handleTeamWebRequest(
+  method: string,
+  path: string,
+  url: URL,
+  req: IncomingMessage,
+  res: ServerResponse,
+  boardClient: DaemonBoardClient,
+  readJsonBody: ReadJsonFn,
+  sendJson: SendJsonFn,
+  signal: AbortSignal,
+): Promise<boolean> {
+  if (!path.startsWith("/api/runlark/team")) {
+    return false;
+  }
+  if (method === "POST" && path === "/api/runlark/team/login") {
+    sendJson(res, 200, await boardClient.teamLogin(await readJsonBody(req), signal));
+    return true;
+  }
+  if (method === "GET" && path === "/api/runlark/team/status") {
+    sendJson(res, 200, await boardClient.getTeamStatus(signal));
+    return true;
+  }
+  if (method === "POST" && path === "/api/runlark/team/sync") {
+    sendJson(res, 200, await boardClient.syncTeam(await readJsonBody(req), signal));
+    return true;
+  }
+  if (method === "POST" && path === "/api/runlark/team/workspaces") {
+    sendJson(res, 201, await boardClient.createWorkspace(await readJsonBody(req), signal));
+    return true;
+  }
+  if (method === "POST" && path === "/api/runlark/team/invitations/accept") {
+    sendJson(res, 200, await boardClient.acceptInvitation(await readJsonBody(req), signal));
+    return true;
+  }
+
+  const wsMatch = /^\/api\/runlark\/team\/workspaces\/([^/]+)(?:\/(members|invitations))?$/u.exec(
+    path,
+  );
+  if (wsMatch) {
+    const wid = decodeURIComponent(wsMatch[1]);
+    const sub = wsMatch[2];
+    if (method === "GET" && !sub) {
+      sendJson(res, 200, await boardClient.getWorkspace(wid, signal));
+      return true;
+    }
+    if (method === "GET" && sub === "members") {
+      sendJson(res, 200, await boardClient.listWorkspaceMembers(wid, signal));
+      return true;
+    }
+    if (method === "POST" && sub === "invitations") {
+      sendJson(res, 201, await boardClient.createInvitation(wid, await readJsonBody(req), signal));
+      return true;
+    }
+  }
+
+  const memberPatchMatch = /^\/api\/runlark\/team\/workspaces\/([^/]+)\/members\/([^/]+)$/u.exec(
+    path,
+  );
+  if (method === "PATCH" && memberPatchMatch) {
+    sendJson(
+      res,
+      200,
+      await boardClient.updateWorkspaceMemberRole(
+        decodeURIComponent(memberPatchMatch[1]),
+        decodeURIComponent(memberPatchMatch[2]),
+        await readJsonBody(req),
+        signal,
+      ),
+    );
+    return true;
+  }
+
+  const revokeMatch =
+    /^\/api\/runlark\/team\/workspaces\/([^/]+)\/invitations\/([^/]+)\/revoke$/u.exec(path);
+  if (method === "POST" && revokeMatch) {
+    sendJson(
+      res,
+      200,
+      await boardClient.revokeInvitation(
+        decodeURIComponent(revokeMatch[1]),
+        decodeURIComponent(revokeMatch[2]),
+        signal,
+      ),
+    );
+    return true;
+  }
+
+  if (method === "GET" && path === "/api/runlark/team/drafts") {
+    const projectId = url.searchParams.get("project_id") ?? undefined;
+    sendJson(res, 200, await boardClient.listDrafts(projectId, signal));
+    return true;
+  }
+  if (method === "POST" && path === "/api/runlark/team/drafts") {
+    sendJson(res, 201, await boardClient.createDraft(await readJsonBody(req), signal));
+    return true;
+  }
+  const draftRetryMatch = /^\/api\/runlark\/team\/drafts\/([^/]+)\/retry$/u.exec(path);
+  if (method === "POST" && draftRetryMatch) {
+    sendJson(
+      res,
+      200,
+      await boardClient.retryDraft(
+        decodeURIComponent(draftRetryMatch[1]),
+        await readJsonBody(req),
+        signal,
+      ),
+    );
+    return true;
+  }
+  const draftDeleteMatch = /^\/api\/runlark\/team\/drafts\/([^/]+)$/u.exec(path);
+  if (method === "DELETE" && draftDeleteMatch) {
+    const { status } = await boardClient.deleteDraft(
+      decodeURIComponent(draftDeleteMatch[1]),
+      signal,
+    );
+    res.writeHead(status);
+    res.end();
+    return true;
+  }
+
+  if (method === "GET" && path === "/api/runlark/team/runners") {
+    const wid = url.searchParams.get("workspace_id") ?? undefined;
+    sendJson(res, 200, await boardClient.listRunners(wid, signal));
+    return true;
+  }
+  if (method === "POST" && path === "/api/runlark/team/runners/register") {
+    sendJson(res, 200, await boardClient.registerRunner(await readJsonBody(req), signal));
+    return true;
+  }
+  if (method === "GET" && path === "/api/runlark/team/runners/status") {
+    const wid = url.searchParams.get("workspace_id") ?? undefined;
+    sendJson(res, 200, await boardClient.getRunnerStatus(wid, signal));
+    return true;
+  }
+  const runActionMatch = /^\/api\/runlark\/team\/runs\/([^/]+)\/(assign|cancel-unreachable)$/u.exec(
+    path,
+  );
+  if (method === "POST" && runActionMatch) {
+    const runId = decodeURIComponent(runActionMatch[1]);
+    const body = await readJsonBody(req);
+    const result =
+      runActionMatch[2] === "assign"
+        ? await boardClient.assignRunner(runId, body, signal)
+        : await boardClient.cancelUnreachableRun(runId, body, signal);
+    sendJson(res, 200, result);
+    return true;
+  }
+  return false;
 }

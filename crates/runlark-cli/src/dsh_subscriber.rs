@@ -94,6 +94,28 @@ impl DshEndpoint {
             token,
         }
     }
+
+    /// Returns a credential-free origin string safe for diagnostic logging.
+    #[must_use]
+    pub fn log_origin(&self) -> String {
+        let without_query_or_frag = self.origin.split(['?', '#']).next().unwrap_or(&self.origin);
+        let (scheme_prefix, after_scheme) = match without_query_or_frag.split_once("://") {
+            Some((scheme, rest)) => (Some(scheme), rest),
+            None => (None, without_query_or_frag),
+        };
+        let (authority, path_suffix) = match after_scheme.find('/') {
+            Some(idx) => (&after_scheme[..idx], &after_scheme[idx..]),
+            None => (after_scheme, ""),
+        };
+        let clean_authority = match authority.rsplit_once('@') {
+            Some((_, host)) => host,
+            None => authority,
+        };
+        match scheme_prefix {
+            Some(scheme) => format!("{scheme}://{clean_authority}{path_suffix}"),
+            None => format!("{clean_authority}{path_suffix}"),
+        }
+    }
 }
 
 /// Subscribes the Runlark daemon to DSH `session/follow` streams over `/api/remote.mux`,
@@ -115,12 +137,13 @@ pub(crate) async fn authenticate_dsh_cookie(
     let Some(token) = token.filter(|t| !t.trim().is_empty()) else {
         return Ok(None);
     };
-    let connect_url = format!("{origin}/connect?token={token}&interactions=none");
+    let connect_url = format!("{origin}/connect");
     let resp = http
         .get(&connect_url)
+        .query(&[("token", token), ("interactions", "none")])
         .send()
         .await
-        .map_err(|e| format!("DSH /connect request failed: {e}"))?;
+        .map_err(|e| format!("DSH /connect request failed: {}", e.without_url()))?;
 
     if !resp.status().is_redirection() && !resp.status().is_success() {
         return Err(format!("DSH /connect rejected with {}", resp.status()));
@@ -146,6 +169,15 @@ impl DshSubscriber {
     /// Panics only if the HTTP client backend fails to initialize.
     #[must_use]
     pub fn new(state: AppState, dsh_url: &str, token: Option<String>) -> Self {
+        Self::from_endpoint(state, DshEndpoint::parse(dsh_url, token))
+    }
+
+    /// Creates a new [`DshSubscriber`] from a pre-parsed [`DshEndpoint`].
+    ///
+    /// # Panics
+    /// Panics only if the HTTP client backend fails to initialize.
+    #[must_use]
+    pub fn from_endpoint(state: AppState, endpoint: DshEndpoint) -> Self {
         let http = Client::builder()
             .redirect(Policy::none())
             .timeout(Duration::from_secs(10))
@@ -153,7 +185,7 @@ impl DshSubscriber {
             .expect("reqwest client must build");
         Self {
             state,
-            endpoint: DshEndpoint::parse(dsh_url, token),
+            endpoint,
             http,
             poll_interval: Duration::from_secs(2),
         }

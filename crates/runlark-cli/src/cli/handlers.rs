@@ -1,5 +1,6 @@
-use crate::cli::client::{DaemonHttpClient, print_output};
+use crate::cli::client::{DaemonHttpClient, print_output, validate_path_segment};
 use crate::cli::run_chat_handlers::{handle_task_board, handle_task_pr};
+use crate::cli::team_handlers::{TokenInput, handle_project_promote_team, handle_task_comment};
 use crate::cli::{ProjectAction, TaskAction};
 use serde_json::{Value, json};
 
@@ -59,6 +60,7 @@ pub async fn handle_project(
             print_output(&val, json_mode, format_project_list)
         }
         ProjectAction::Show { id } => {
+            let id = validate_path_segment(&id, "project_id")?;
             let val = client.get_json(&format!("/api/v1/projects/{id}")).await?;
             print_output(&val, json_mode, |v| {
                 format!(
@@ -69,6 +71,28 @@ pub async fn handle_project(
                     v["repo_root"].as_str().unwrap_or("")
                 )
             })
+        }
+        ProjectAction::PromoteTeam {
+            project_id,
+            server,
+            workspace,
+            token,
+            token_file,
+            token_stdin,
+        } => {
+            handle_project_promote_team(
+                client,
+                &project_id,
+                server,
+                workspace,
+                TokenInput {
+                    token,
+                    token_file,
+                    token_stdin,
+                },
+                json_mode,
+            )
+            .await
         }
     }
 }
@@ -133,6 +157,7 @@ pub async fn handle_task(
             list_tasks_cmd(client, project_id, stage, json_mode).await
         }
         TaskAction::Show { id } => {
+            let id = validate_path_segment(&id, "task_id")?;
             let val = client.get_json(&format!("/api/v1/tasks/{id}")).await?;
             print_output(&val, json_mode, |v| {
                 format!(
@@ -146,6 +171,7 @@ pub async fn handle_task(
             })
         }
         TaskAction::Move { id, stage, actor } => {
+            let id = validate_path_segment(&id, "task_id")?;
             let body = json!({ "stage": stage, "actor_name": actor });
             let val = client
                 .post_json(&format!("/api/v1/tasks/{id}/move"), Some(&body))
@@ -163,6 +189,7 @@ pub async fn handle_task(
             clarification,
             no_advance,
         } => {
+            let id = validate_path_segment(&id, "task_id")?;
             let body = json!({ "clarification": clarification, "advance_to_plan": !no_advance });
             let val = client
                 .post_json(&format!("/api/v1/tasks/{id}/clarify"), Some(&body))
@@ -180,6 +207,7 @@ pub async fn handle_task(
             plan_text,
             approve,
         } => {
+            let id = validate_path_segment(&id, "task_id")?;
             let body = json!({ "plan_text": plan_text, "approve": approve });
             let val = client
                 .post_json(&format!("/api/v1/tasks/{id}/plan"), Some(&body))
@@ -271,6 +299,7 @@ async fn handle_task_lifecycle(
 ) -> CliResult {
     match action {
         TaskAction::Start { id, prompt } => {
+            let id = validate_path_segment(&id, "task_id")?;
             let mut body = json!({});
             if let Some(p) = prompt {
                 body["prompt"] = json!(p);
@@ -301,6 +330,7 @@ async fn handle_task_lifecycle(
             })
         }
         TaskAction::Accept { id, actor, comment } => {
+            let id = validate_path_segment(&id, "task_id")?;
             let mut body = json!({ "actor": actor });
             if let Some(c) = comment {
                 body["comment"] = json!(c);
@@ -318,6 +348,7 @@ async fn handle_task_lifecycle(
             })
         }
         TaskAction::Reject { id, actor, reason } => {
+            let id = validate_path_segment(&id, "task_id")?;
             let body = json!({ "actor": actor, "reason": reason });
             let val = client
                 .post_json(&format!("/api/v1/tasks/{id}/reject"), Some(&body))
@@ -338,6 +369,11 @@ async fn handle_task_lifecycle(
             draft,
         } => handle_task_pr(client, &id, title, base_branch, draft, json_mode).await,
         TaskAction::Board { project_id } => handle_task_board(client, project_id, json_mode).await,
+        TaskAction::Comment {
+            task_id,
+            message,
+            run_id,
+        } => handle_task_comment(client, &task_id, message, run_id, json_mode).await,
         _ => unreachable!(),
     }
 }

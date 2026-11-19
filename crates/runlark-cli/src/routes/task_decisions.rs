@@ -1,5 +1,6 @@
 use crate::git_pr::compute_worktree_diff;
 use crate::routes::error::{ApiError, api_error, deterministic_id, storage_error_to_http};
+use crate::routes::team_gate::{self, TeamAcceptParams};
 use crate::scheduler::Scheduler;
 use crate::state::AppState;
 use axum::Json;
@@ -63,6 +64,33 @@ pub async fn accept_task(
     let (command_id, decision_id, has_explicit_cmd) =
         resolve_decision_ids("cmd_acc", "dec_acc", req.command_id.as_deref());
     let actor = normalize_actor(req.actor.as_deref());
+
+    if let Some((task, ctx)) = team_gate::resolve_task_team_context(&state, &task_id)? {
+        let (updated_task, updated_run) = team_gate::execute_team_accept(
+            &state,
+            &ctx,
+            &task,
+            TeamAcceptParams {
+                command_id,
+                decision_id: decision_id.clone(),
+                actor,
+                comment: req.comment,
+                expected_revision: req.expected_revision,
+                plan_version: req.plan_version,
+                head_sha: req.head_sha,
+                base_sha: req.base_sha,
+                policy_digest: req.policy_digest,
+                evidence_digest: req.evidence_digest,
+            },
+            now,
+        )
+        .await?;
+        return Ok(Json(DecisionActionResponse {
+            decision_id: decision_id.0,
+            task: updated_task,
+            run: updated_run,
+        }));
+    }
 
     let mut conn = state.get_connection().map_err(|e| {
         api_error(
@@ -255,6 +283,28 @@ pub async fn reject_task(
     let (command_id, decision_id, has_explicit_cmd) =
         resolve_decision_ids("cmd_rej", "dec_rej", req.command_id.as_deref());
     let actor = normalize_actor(req.actor.as_deref());
+
+    if let Some((task, ctx)) = team_gate::resolve_task_team_context(&state, &task_id)? {
+        let (updated_task, updated_run) = team_gate::execute_team_reject(
+            &state,
+            &ctx,
+            &task,
+            team_gate::TeamRejectParams {
+                command_id,
+                decision_id: decision_id.clone(),
+                actor,
+                reason: req.reason,
+                expected_revision: req.expected_revision,
+            },
+            now,
+        )
+        .await?;
+        return Ok(Json(DecisionActionResponse {
+            decision_id: decision_id.0,
+            task: updated_task,
+            run: updated_run,
+        }));
+    }
 
     let (replayed, run_id, decision_id) = {
         let mut conn = state.get_connection().map_err(|e| {

@@ -1,6 +1,9 @@
 use super::{ChatDispatchRequest, ChatDispatchResponse};
 use crate::routes::board::load_enriched_task;
-use crate::routes::error::{ApiError, api_error, run_status_str, storage_error_to_http};
+use crate::routes::error::{
+    ApiError, api_error, deterministic_id, run_status_str, storage_error_to_http,
+};
+use crate::routes::team_gate;
 use crate::scheduler::Scheduler;
 use crate::state::AppState;
 use axum::http::StatusCode;
@@ -194,12 +197,11 @@ pub(super) fn exec_budget(
     ))
 }
 
-pub(super) fn exec_prompt(
+fn resolve_prompt_session(
     state: &AppState,
     req: &ChatDispatchRequest,
-    text: String,
-) -> Result<(StatusCode, ChatDispatchResponse), ApiError> {
-    let mut conn = state.get_connection().map_err(|e| {
+) -> Result<runlark_domain::Session, ApiError> {
+    let conn = state.get_connection().map_err(|e| {
         api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "storage_error",
@@ -211,8 +213,8 @@ pub(super) fn exec_prompt(
         .as_ref()
         .filter(|s| !s.trim().is_empty())
         .map(|s| SessionId::from(s.as_str()));
-    let session = match sid_opt {
-        Some(sid) => SessionStore::get_session(&conn, &sid)
+    if let Some(sid) = sid_opt {
+        return SessionStore::get_session(&conn, &sid)
             .map_err(storage_error_to_http)?
             .ok_or_else(|| {
                 api_error(
@@ -220,64 +222,117 @@ pub(super) fn exec_prompt(
                     "session_not_found",
                     format!("Session not found: {sid}"),
                 )
-            })?,
-        None => {
-            if let Some(rid) = req.run_id.as_deref().filter(|s| !s.trim().is_empty()) {
-                let run = SessionStore::get_run(&conn, &RunId::from(rid))
-                    .map_err(storage_error_to_http)?
-                    .ok_or_else(|| {
-                        api_error(
-                            StatusCode::NOT_FOUND,
-                            "run_not_found",
-                            format!("Run not found: {rid}"),
-                        )
-                    })?;
-                SessionStore::get_session(&conn, &run.session_id)
-                    .map_err(storage_error_to_http)?
-                    .ok_or_else(|| {
-                        api_error(
-                            StatusCode::NOT_FOUND,
-                            "session_not_found",
-                            format!("Session not found: {}", run.session_id),
-                        )
-                    })?
-            } else {
-                return Err(api_error(
-                    StatusCode::BAD_REQUEST,
-                    "session_required",
-                    "session_id or run_id is required to send plain-text prompts",
-                ));
-            }
-        }
+            });
+    }
+    let Some(rid) = req.run_id.as_deref().filter(|s| !s.trim().is_empty()) else {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "session_required",
+            "session_id or run_id is required to send plain-text prompts",
+        ));
     };
+    let run = SessionStore::get_run(&conn, &RunId::from(rid))
+        .map_err(storage_error_to_http)?
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::NOT_FOUND,
+                "run_not_found",
+                format!("Run not found: {rid}"),
+            )
+        })?;
+    SessionStore::get_session(&conn, &run.session_id)
+        .map_err(storage_error_to_http)?
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::NOT_FOUND,
+                "session_not_found",
+                format!("Session not found: {}", run.session_id),
+            )
+        })
+}
 
+pub(super) async fn exec_prompt(
+    state: &AppState,
+    req: &ChatDispatchRequest,
+    text: String,
+) -> Result<(StatusCode, ChatDispatchResponse), ApiError> {
+    let session = resolve_prompt_session(state, req)?;
+    let explicit_cmd_id = req.command_id.as_deref().filter(|s| !s.trim().is_empty());
     let run_id = req
         .run_id
         .as_deref()
         .filter(|s| !s.trim().is_empty())
         .map(RunId::from)
         .or_else(|| session.active_run_id.clone())
-        .unwrap_or_else(|| RunId::from(format!("run_{}", Uuid::new_v4().simple())));
+        .unwrap_or_else(|| match explicit_cmd_id {
+            Some(cid) => RunId::from(deterministic_id("run", cid)),
+            None => RunId::from(format!("run_{}", Uuid::new_v4().simple())),
+        });
     let now = Timestamp(AppState::current_timestamp_ms());
     let cmd = SessionCommand::SendPrompt(SendPromptCommand {
-        command_id: CommandId::from(
-            req.command_id
-                .clone()
-                .unwrap_or_else(|| format!("cmd_chat_{}", Uuid::new_v4().simple())),
-        ),
+        command_id: CommandId::from(explicit_cmd_id.map_or_else(
+            || format!("cmd_chat_{}", Uuid::new_v4().simple()),
+            str::to_string,
+        )),
         session_id: session.id.clone(),
         run_id: run_id.clone(),
         prompt: text,
         expected_revision: session.current_revision,
         created_at: now,
     });
-    let outcome = LocalStore::apply_command(&mut conn, &cmd, now).map_err(storage_error_to_http)?;
-    if let CommandApplyOutcome::Applied { events, .. } = &outcome {
-        state.publish_events(&session.id.0, events);
-        state.notify_outbox();
-        state.notify_dsh_subscriber();
-        state.notify_scheduler();
+
+    if let Some(team) = team_gate::resolve_session_command_team_context(state, &cmd)?
+        && let Some((status, axum::Json(resp))) =
+            crate::routes::commands::submit_team_session_command(state, &cmd, team, now).await?
+    {
+        let created_run_id = resp.run_id.unwrap_or_else(|| run_id.0.clone());
+        let workflow_stage = state
+            .get_connection()
+            .ok()
+            .and_then(|conn| {
+                SessionStore::get_run(&conn, &RunId::from(created_run_id.as_str()))
+                    .ok()
+                    .flatten()
+            })
+            .map_or(WorkflowStage::Implementation, |r| r.workflow_stage);
+        return Ok((
+            status,
+            ChatDispatchResponse {
+                command: "prompt".to_string(),
+                summary: format!(
+                    "Sent prompt to session {} (run {created_run_id})",
+                    session.id
+                ),
+                data: json!({
+                    "session_id": session.id.0,
+                    "run_id": created_run_id,
+                    "workflow_stage": workflow_stage,
+                }),
+            },
+        ));
     }
+
+    let mut conn = state.get_connection().map_err(|e| {
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "storage_error",
+            e.to_string(),
+        )
+    })?;
+    let outcome = LocalStore::apply_command(&mut conn, &cmd, now).map_err(storage_error_to_http)?;
+    let workflow_stage = match &outcome {
+        CommandApplyOutcome::Applied { run, events, .. } => {
+            state.publish_events(&session.id.0, events);
+            state.notify_outbox();
+            state.notify_dsh_subscriber();
+            state.notify_scheduler();
+            run.as_ref()
+                .map_or(WorkflowStage::Implementation, |r| r.workflow_stage)
+        }
+        CommandApplyOutcome::AlreadyExists { run, .. } => run
+            .as_ref()
+            .map_or(WorkflowStage::Implementation, |r| r.workflow_stage),
+    };
     Ok((
         StatusCode::CREATED,
         ChatDispatchResponse {
@@ -286,7 +341,7 @@ pub(super) fn exec_prompt(
             data: json!({
                 "session_id": session.id.0,
                 "run_id": run_id.0,
-                "workflow_stage": WorkflowStage::Implementation,
+                "workflow_stage": workflow_stage,
             }),
         },
     ))
