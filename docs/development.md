@@ -35,27 +35,32 @@ configured remote проверяется вся достижимая истор�
 Проверка формата не определяет семантическую корректность выбранного типа и не заменяет review.
 Как и другие локальные hooks, она требует установленного `core.hooksPath`; отключать её нельзя.
 
-Сначала читать [PRODUCT](../PRODUCT.md), [архитектуру](architecture.md), [ROADMAP](../ROADMAP.md)
-и применимый `.agents/skills/*/SKILL.md`. Имплементации сейчас нет; команды продукта из нового
-плана пока не существуют. Дизайн-контракт сохранён в [web/DESIGN.md](../web/DESIGN.md).
+Сначала читать [PRODUCT](../PRODUCT.md), [архитектуру](architecture.md),
+[запуск и упаковку](running.md), [ROADMAP](../ROADMAP.md) и применимый `.agents/skills/*/SKILL.md`.
+Архитектурные границы описаны в [easement.yml](../easement.yml), frontend-профиль — в
+[feod.profile.md](../feod.profile.md), визуальный контракт — в [web/DESIGN.md](../web/DESIGN.md).
 
 ## Полезные команды
 
-| Команда               | Действие                                        |
-| --------------------- | ----------------------------------------------- |
-| `just fmt`            | форматирование поддерживаемых authored файлов   |
-| `just lint`           | static/security/scope/size gates                |
-| `just test`           | behavioral tests инструментов bootstrap         |
-| `just check`          | весь проверяемый bootstrap                      |
-| `just review PR`      | дождаться настоящего Sych summary текущего head |
-| `just impeccable ...` | сохранённый project-local UI workflow           |
+| Команда               | Действие                                                         |
+| --------------------- | ---------------------------------------------------------------- |
+| `just fmt`            | форматирование authored файлов (Oxfmt, TOML, shell, Rust, just)  |
+| `just lint`           | scope, size, easement, Rust, WASM, TS, FEOD/UI, files и security |
+| `just test`           | JS/TS/UI, packaging, DSH plugin, Rust/SQLite и PostgreSQL тесты  |
+| `just docs`           | `cargo doc --workspace --no-deps --all-features` с `-D warnings` |
+| `just smoke`          | многопроцессный E2E smoke (A0 + A1 + A2 с реальным PostgreSQL)   |
+| `just check`          | весь обязательный gate (`lint`, `test`, `docs`, `smoke`)         |
+| `just package`        | сборка release-архива `.tar.gz` + `.sha256` в `dist/`            |
+| `just review PR`      | дождаться настоящего Sych summary текущего head                  |
+| `just impeccable ...` | сохранённый project-local UI workflow                            |
 
-[Исходный план](new-plan.md) содержит исследовательские утверждения о внешних API. Перед SDK,
-DSH bridge/controller, Wasmtime/WIT или frontend implementation сверить официальные docs и
-конкретную версию. Не добавлять зависимости и абстракции для будущих, ещё не используемых компонентов.
+[Исходный план](new-plan.md) содержит исследовательские утверждения о внешних API. Перед изменениями
+SDK, DSH bridge/controller, Wasmtime/WIT или frontend сверяйте официальные docs и конкретную версию.
+Не добавлять зависимости и абстракции для будущих, ещё не используемых компонентов.
 
 Новый репозиторий публичный; все CI jobs, включая ожидание Sych, работают на стандартных
 GitHub-hosted `ubuntu-24.04`. Личные self-hosted runners и private infrastructure для CI не нужны.
-Лицензия проекта пока не выбрана; лицензии сторонних навыков сохраняются.
+Проект распространяется под лицензией [Apache-2.0](../LICENSE); лицензии сторонних навыков
+сохраняются.
 Не коммитить credentials, личные transcripts, production data или local
 checkout paths. Не deploy production, не создавать платные ресурсы и не публиковать images без запроса.

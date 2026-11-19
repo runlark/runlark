@@ -11,9 +11,12 @@ production changes or destructive operations.
 ## Read first
 
 Read [README](README.md), [PRODUCT](PRODUCT.md), [architecture](docs/architecture.md),
-[development](docs/development.md), [gates](docs/gates.md) and [ROADMAP](ROADMAP.md).
-The [new plan](docs/new-plan.md) defines the reset direction. This repository initially contains
-only the plan and development gates. Never describe planned DSH/Rust/SQLite/WASM behavior as implemented.
+[running](docs/running.md), [development](docs/development.md), [gates](docs/gates.md) and
+[ROADMAP](ROADMAP.md).
+The [new plan](docs/new-plan.md) defines the reset direction. Stages B0, A0, A1 (code) and A2 are
+implemented across `crates/runlark-{domain,local,wasm,cli,server}`, `packages/dsh-plugin`, `web/`,
+`wit/` and `workflows/solo-default`. Never describe unimplemented or deferred behavior (containers,
+Lean proofs, full remote DSH session proxy, auto-merge, marketplace) as implemented.
 Legacy history and ADR live in `runlark-lagacy`; do not rewrite or import their obsolete runtime assumptions.
 
 ## Skills
@@ -24,18 +27,20 @@ Read the matching `.agents/skills/*/SKILL.md` before changing its area:
 - `runlark-review`: CI, GitHub, reviews and delivery. Sych is mandatory for this repo's changes.
 - `runlark-rust`: Rust code/contracts/dependencies, pinned stable toolchain and Google Rust style.
 - `runlark-workflows`: domain, storage, adapters, ownership, authorization, budgets and approvals.
-  Interpret references to old Temporal/PostgreSQL runtime as legacy-specific; new local storage is SQLite.
-- `easement`: new files/imports and architecture verification. Before product source, declare actual
-  components and run `easement explain`/`propose`; keep strict `--require-evidence` in `just check`.
+  Interpret references to old Temporal/PostgreSQL runtime as legacy-specific; local storage is
+  SQLite and optional team collaboration (`runlark-server`) uses PostgreSQL.
+- `easement`: new files/imports and architecture verification. Run `easement explain`/`propose`
+  before adding files or cross-component imports against `easement.yml`; keep strict
+  `--require-evidence` in `just check`.
 - `impeccable`: every UI/UX change or review; context once/session, matching playbook and craft floor
   before editing, desktop/mobile rendered exercises and detect before delivery.
 - `modern-web-guidance`: search its guides before HTML/CSS/browser JavaScript.
-- `feod`: frontend boundaries and public APIs; create the new project's profile before frontend source.
+- `feod`: frontend boundaries and public APIs; follow [feod.profile.md](feod.profile.md).
 - `reatom`, `reatom-async`: v1001 state, forms, async; `reatom-review` for review and
   `reatom-api-design` before helpers. React/Mantine adapters and props-only presentation stay selected.
   Do not adopt the separate `@reatom/jsx` renderer or migrate routing from generic examples.
 
-[web/DESIGN.md](web/DESIGN.md) is the preserved visual contract. No UI implementation is shipped yet.
+[web/DESIGN.md](web/DESIGN.md) is the visual contract implemented by `web/` and `@runlark/dsh-plugin`.
 No architecture policy is loosened to make a check pass. New declarations must describe the selected
 new product and land with evidence, not grant speculative future imports.
 
@@ -46,8 +51,9 @@ new product and land with evidence, not grant speculative future imports.
    deletion to new layers. No unused speculative dependencies, adapters, options or fallbacks.
 3. Reproduce bugs before fixing. For cleanup write a plan and lock missing behavior with meaningful
    regression tests first; separate writer/reviewer passes. Tests prove observable behavior.
-4. Product source must add actual compiler, architecture, behavior and smoke checks in the same PR;
-   `scripts/bootstrap-scope.mjs` fails closed until that integration. Do not simply delete the guard.
+4. Any new source language or format must add actual compiler, architecture, behavior and smoke
+   checks in the same PR; `scripts/bootstrap-scope.mjs` fails closed for unintegrated source types
+   (such as Dockerfiles or Lean/Python/Go). Do not simply delete the guard.
 5. Run `mise exec -- just check` and exercise the real changed path and failures before pushing.
    Conventional Commits are mandatory: `type(scope)!: description` (scope and `!` optional).
    Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.

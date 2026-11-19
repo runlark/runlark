@@ -16,7 +16,7 @@ use axum::Router;
 use axum::routing::{delete, get, patch, post};
 use runlark_domain::Timestamp;
 use runlark_local::{ReconciliationEngine, initialize_schema, open_sqlite};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::signal;
 use tokio::sync::watch;
@@ -279,22 +279,60 @@ struct DaemonWorkers {
     dsh: Option<tokio::task::JoinHandle<()>>,
 }
 
+fn resolve_default_workflow_from(
+    env_override: Option<&str>,
+    cwd: &Path,
+    exe_path: Option<&Path>,
+) -> Option<PathBuf> {
+    if let Some(trimmed) = env_override.map(str::trim).filter(|s| !s.is_empty()) {
+        return Some(PathBuf::from(trimmed));
+    }
+
+    let cwd_candidate = cwd.join("workflows").join("solo-default");
+    if cwd_candidate.join("manifest.json").exists() {
+        return Some(cwd_candidate);
+    }
+
+    exe_path.and_then(|exe| {
+        let resolved_exe = std::fs::canonicalize(exe).unwrap_or_else(|_| exe.to_path_buf());
+        let bundle_candidate = resolved_exe
+            .parent()?
+            .parent()?
+            .join("workflows")
+            .join("solo-default");
+        bundle_candidate
+            .join("manifest.json")
+            .exists()
+            .then_some(bundle_candidate)
+    })
+}
+
 fn init_verification_service(
-    data_dir: &std::path::Path,
+    data_dir: &Path,
 ) -> Result<VerificationService, Box<dyn std::error::Error + Send + Sync>> {
     let verification_service = VerificationService::with_cas_dir(data_dir.join("wasm-cas"))?;
-    let default_workflow = std::env::var("RUNLARK_WORKFLOW_PACKAGE")
-        .ok()
-        .map_or_else(|| PathBuf::from("workflows/solo-default"), PathBuf::from);
-    if default_workflow.join("manifest.json").exists() {
-        let pin = verification_service.install_package_dir(&default_workflow)?;
-        tracing::info!(
-            "Installed workflow package {}@{} (digest: {})",
-            pin.name,
-            pin.version,
-            pin.package_digest
-        );
+    let env_override = std::env::var("RUNLARK_WORKFLOW_PACKAGE").ok();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let exe_path = std::env::current_exe().ok();
+    if let Some(default_workflow) =
+        resolve_default_workflow_from(env_override.as_deref(), &cwd, exe_path.as_deref())
+    {
+        if default_workflow.join("manifest.json").exists() {
+            let pin = verification_service.install_package_dir(&default_workflow)?;
+            tracing::info!(
+                "Installed workflow package {}@{} (digest: {})",
+                pin.name,
+                pin.version,
+                pin.package_digest
+            );
+        } else {
+            tracing::warn!(
+                "Configured RUNLARK_WORKFLOW_PACKAGE has no manifest.json: {:?}",
+                default_workflow
+            );
+        }
     }
+
     Ok(verification_service)
 }
 
@@ -384,5 +422,49 @@ async fn shutdown_signal() {
         () = terminate => {
             tracing::info!("Received SIGTERM signal, shutting down...");
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_default_workflow_from;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    #[test]
+    fn resolves_env_override_then_cwd_then_bundle_sibling() {
+        let tmp = TempDir::new().expect("temp dir");
+        let cwd = tmp.path().join("cwd");
+        let bundle = tmp.path().join("bundle");
+        let exe = bundle.join("bin").join("runlark");
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        std::fs::create_dir_all(bundle.join("bin")).expect("bin dir");
+        std::fs::write(&exe, b"bin").expect("exe placeholder");
+
+        assert_eq!(resolve_default_workflow_from(None, &cwd, Some(&exe)), None);
+
+        let bundle_wf = bundle.join("workflows").join("solo-default");
+        std::fs::create_dir_all(&bundle_wf).expect("bundle wf");
+        std::fs::write(bundle_wf.join("manifest.json"), b"{}").expect("bundle manifest");
+
+        let from_bundle = resolve_default_workflow_from(Some("  "), &cwd, Some(&exe))
+            .expect("bundle workflow resolved");
+        assert_eq!(
+            from_bundle,
+            std::fs::canonicalize(&bundle_wf).expect("canonical bundle wf")
+        );
+
+        let cwd_wf = cwd.join("workflows").join("solo-default");
+        std::fs::create_dir_all(&cwd_wf).expect("cwd wf");
+        std::fs::write(cwd_wf.join("manifest.json"), b"{}").expect("cwd manifest");
+
+        assert_eq!(
+            resolve_default_workflow_from(None, &cwd, Some(&exe)),
+            Some(cwd_wf)
+        );
+        assert_eq!(
+            resolve_default_workflow_from(Some("/custom/wf"), &cwd, Some(&exe)),
+            Some(PathBuf::from("/custom/wf"))
+        );
     }
 }

@@ -1,5 +1,6 @@
 /node_modules/
 /target/
+/dist/
 /packages/dsh-plugin/dist/
 /.reports/
 /.local/

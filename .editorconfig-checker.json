@@ -2,6 +2,7 @@
   "Exclude": [
     "^\\.git/",
     "^target/",
+    "^dist/",
     "(^|/)node_modules/",
     "^\\.reports/",
     "^\\.local/",
