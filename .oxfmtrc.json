@@ -5,6 +5,7 @@
   "sortPackageJson": false,
   "ignorePatterns": [
     "target/",
+    "dist/",
     "node_modules/",
     ".reports/",
     ".local/",

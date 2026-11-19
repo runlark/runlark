@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
@@ -37,6 +38,17 @@ function buildStyleInjection(cssCode) {
         `  document.head.appendChild(__style);`,
         `}`,
     ].join("\n");
+}
+
+function writeFileAtomic(filePath, content) {
+    const tmpPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+        writeFileSync(tmpPath, content, "utf8");
+        renameSync(tmpPath, filePath);
+    } catch (error) {
+        rmSync(tmpPath, { force: true });
+        throw error;
+    }
 }
 
 async function buildClientBundle() {
@@ -87,9 +99,9 @@ async function buildClientBundle() {
         "",
     ].join("\n");
 
-    writeFileSync(OUT_FILE, wrapped, "utf8");
+    writeFileAtomic(OUT_FILE, wrapped);
     if (cssCode.trim().length > 0) {
-        writeFileSync(OUT_CSS_FILE, cssCode, "utf8");
+        writeFileAtomic(OUT_CSS_FILE, cssCode);
     }
 
     const pkg = JSON.parse(

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Подготовка к первому релизу (лицензия Apache-2.0, актуализация документации и упаковка):
+  - Принята лицензия **Apache License 2.0**: добавлен файл `LICENSE`, синхронизированы `package.json`, `packages/dsh-plugin/package.json`, `README.md` и `docs/development.md` (в дополнение к `Cargo.toml`).
+  - Актуализирована устаревшая bootstrap-документация (`README.md`, `PRODUCT.md`, `docs/architecture.md`, `docs/development.md`, `docs/gates.md`, `AGENTS.md`) в соответствии с реализованными этапами A0–A2 и активными гейтами `just check`.
+  - Добавлено руководство запуска и упаковки [docs/running.md](docs/running.md) (сборка и проверка release-архива, локальный solo-режим с DSH Web, self-host запуск `runlark-server` с PostgreSQL, systemd, reverse proxy и подключением раннеров).
+  - Добавлен упаковщик release-архивов `scripts/package-release.mjs` (`just package`) с проверкой версий workspace, валидацией `workflows/solo-default`, автономной установкой `@runlark/dsh-plugin` (`scripts/setup-dsh-profile.mjs` и `scripts/apply-dsh-patch.mjs` поддерживают как репозиторий, так и распакованный архив), манифестом `manifest.json` и контрольными суммами `SHA256SUMS` / `.tar.gz.sha256`, а также поведенческий тест `scripts/package-release.test.mjs`.
+  - В `crates/runlark-cli/src/daemon.rs` добавлен fallback поиска `workflows/solo-default` относительно каталога бинарника (`<bundle>/bin/runlark` -> `<bundle>/workflows/solo-default`), чтобы распакованный release-демон автоматически подхватывал встроенный WASM workflow из любой рабочей директории.
+  - В `scripts/build-dsh-client.mjs` запись `dist/client.{js,css}` переведена на атомарную (`tmp` + `renameSync`) для устранения гонки при параллельных тестах и сборках.
+
 - Завершён этап A2 (командная работа 2–4 человек — PR 3: Team UI, verified CAS, mobile acceptance и сквозной E2E smoke):
   - В `web/src` добавлен FEOD-модуль `modules/team-collab` (Reatom v1001 `withAsyncData`/`withAsync`), контракты/клиент/RU+EN локализация (`common/team-{types,http,i18n,i18n-ru}.ts`, `common/team.css`) и чистые presentational-адаптеры `common/ui/{TeamSyncStatusBar,TeamConnectionCard,TeamMembersInvitesPanel,TeamRunnersDraftsPanel,PromoteTeamDialog,RunnerOwnershipPanel,TaskCommentsPanel,CasArtifactEvidencePanel,MobileAcceptanceBar}.tsx` по контракту `web/DESIGN.md`:
     - управление подключениями к командному серверу, workspace, ролями участников (`owner`/`maintainer`/`member`/`viewer`), списком и отзывом приглашений, принятием приглашений и `solo -> team` promotion с явной блокировкой при наличии активных/незавершённых runs;

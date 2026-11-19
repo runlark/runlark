@@ -77,6 +77,9 @@ docs:
 smoke:
     node scripts/with-test-postgres.mjs node scripts/smoke.mjs
 
+package *args:
+    node scripts/package-release.mjs "$@"
+
 # The same complete gate runs locally, in pre-push and in CI.
 check: lint test docs smoke
 

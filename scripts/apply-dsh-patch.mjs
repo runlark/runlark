@@ -6,17 +6,26 @@ import { fileURLToPath } from "node:url";
 
 const EXPECTED_VERSION = "0.2.2-rc.3";
 const MARKER = "sessionCommandInterceptor";
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const PATCH_PATH = join(
-    REPO_ROOT,
-    "packages",
-    "dsh-plugin",
-    "patches",
-    `@deepseek-ai+dsh-api-session-controller@${EXPECTED_VERSION}.patch`,
-);
+const ROOT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const PATCH_FILE = `@deepseek-ai+dsh-api-session-controller@${EXPECTED_VERSION}.patch`;
+
+function resolvePatchPath(rootDir) {
+    const candidates = [
+        join(rootDir, "packages", "dsh-plugin", "patches", PATCH_FILE),
+        join(rootDir, "dsh-plugin", "patches", PATCH_FILE),
+    ];
+    for (const candidate of candidates) {
+        if (existsSync(candidate)) {
+            return candidate;
+        }
+    }
+    throw new Error(`DSH session controller patch not found (checked: ${candidates.join(", ")})`);
+}
+
+const PATCH_PATH = resolvePatchPath(ROOT_DIR);
 
 function parseArgs(argv) {
-    let targetDir = REPO_ROOT;
+    let targetDir = ROOT_DIR;
     let ifPresent = false;
     let checkOnly = false;
     for (let i = 0; i < argv.length; i += 1) {
