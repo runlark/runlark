@@ -64,7 +64,7 @@ pub fn build_router(state: ServerState) -> Router {
         )
         .route(
             "/api/v1/workspaces/{wid}/invitations",
-            post(routes::workspaces::create_invitation),
+            get(routes::workspaces::list_invitations).post(routes::workspaces::create_invitation),
         )
         .route(
             "/api/v1/workspaces/{wid}/invitations/{invite_id}/revoke",

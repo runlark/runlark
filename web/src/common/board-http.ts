@@ -15,15 +15,39 @@ import type {
   WorkflowStage,
 } from "./board-types";
 import { createRunlarkApiClient, type HttpClientOptions } from "./runlark-http";
+import { TeamApiError } from "./team-types";
 
-async function readApiError(res: Response): Promise<string> {
+async function readApiError(res: Response): Promise<TeamApiError> {
   const text = await res.text();
-  if (!text) return `HTTP ${String(res.status)}`;
+  if (!text) {
+    return new TeamApiError({
+      message: `HTTP ${String(res.status)}`,
+      httpStatus: res.status,
+      code: res.status === 503 ? "team_server_offline" : `http_${String(res.status)}`,
+    });
+  }
   try {
-    const parsed = JSON.parse(text) as { message?: string; error?: string };
-    return parsed.message ?? parsed.error ?? text;
+    const parsed = JSON.parse(text) as {
+      message?: string;
+      error?: string;
+      server_code?: string;
+      actual_revision?: number;
+      expected_revision?: number;
+    };
+    return new TeamApiError({
+      message: parsed.message ?? parsed.error ?? text,
+      httpStatus: res.status,
+      code: parsed.error ?? `http_${String(res.status)}`,
+      serverCode: parsed.server_code ?? null,
+      actualRevision: parsed.actual_revision ?? null,
+      expectedRevision: parsed.expected_revision ?? null,
+    });
   } catch {
-    return text;
+    return new TeamApiError({
+      message: text,
+      httpStatus: res.status,
+      code: res.status === 503 ? "team_server_offline" : `http_${String(res.status)}`,
+    });
   }
 }
 
@@ -37,7 +61,7 @@ export function createBoardApiClient(options: HttpClientOptions = {}): BoardApiC
   async function reqJson<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await fetchFn(`${apiPrefix}${path}`, init);
     if (!res.ok) {
-      throw new Error(await readApiError(res));
+      throw await readApiError(res);
     }
     return (await res.json()) as T;
   }

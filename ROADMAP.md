@@ -40,10 +40,10 @@
 
 ## A2 — команда из 2–4 человек
 
-- [ ] Один backend/protocol для SaaS и self-host, workspace roles и приглашения.
-- [ ] Runner assignment без автоматического takeover активного run.
-- [ ] Comments, decisions, durable history, verified artifacts и mobile acceptance.
-- [ ] Snapshot/cursor/revision conflicts, offline drafts и reconnect failure paths.
-- [ ] Solo→team только без активных runs, с явным server acknowledgement и ownership change.
+- [x] Один backend/protocol для SaaS и self-host, workspace roles и приглашения.
+- [x] Runner assignment без автоматического takeover активного run.
+- [x] Comments, decisions, durable history, verified artifacts и mobile acceptance.
+- [x] Snapshot/cursor/revision conflicts, offline drafts и reconnect failure paths.
+- [x] Solo→team только без активных runs, с явным server acknowledgement и ownership change.
 
 Auto-merge, marketplace и полный remote session proxy не входят в первый полезный релиз.

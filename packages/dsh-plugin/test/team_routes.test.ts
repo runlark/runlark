@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import http from "node:http";
 import { test } from "node:test";
 import { DaemonClient } from "../src/daemon_client.ts";
@@ -37,6 +38,11 @@ test("web_board_routes proxies team workspaces/invites/promote/sync/drafts/comme
     if (req.method === "PATCH" && url.pathname === "/api/v1/team/workspaces/ws_1/members/usr_b") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ user_id: "usr_b", role: "maintainer" }));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/v1/team/workspaces/ws_1/invitations") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify([{ id: "inv_1", invitee_hint: "bob", status: "pending" }]));
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/v1/team/workspaces/ws_1/invitations") {
@@ -122,6 +128,31 @@ test("web_board_routes proxies team workspaces/invites/promote/sync/drafts/comme
       res.end(JSON.stringify({ aggregate_id: "run_1", cursor_seq: 9 }));
       return;
     }
+    const validDigest = createHash("sha256").update("verified!").digest("hex");
+    const tamperedDigest = "a".repeat(64);
+    const deadDigest = "d".repeat(64);
+    if (req.method === "GET" && url.pathname === `/api/v1/artifacts/${validDigest}`) {
+      if (url.searchParams.get("meta") === "true") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({ digest_sha256: validDigest, kind: "evidence_bundle", size_bytes: 9 }),
+        );
+      } else {
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end("verified!");
+      }
+      return;
+    }
+    if (req.method === "GET" && url.pathname === `/api/v1/artifacts/${tamperedDigest}`) {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("tampered-bytes");
+      return;
+    }
+    if (req.method === "GET" && url.pathname === `/api/v1/artifacts/${deadDigest}`) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "corrupt_artifact", message: "sha256 mismatch" }));
+      return;
+    }
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "not_found" }));
   });
@@ -182,6 +213,12 @@ test("web_board_routes proxies team workspaces/invites/promote/sync/drafts/comme
       })
     ).json();
     assert.equal(patched.role, "maintainer");
+
+    const invList = await (
+      await fetch(`${baseUrl}/api/runlark/team/workspaces/ws_1/invitations`)
+    ).json();
+    assert.equal(invList.length, 1);
+    assert.equal(invList[0].id, "inv_1");
 
     const invRes = await fetch(`${baseUrl}/api/runlark/team/workspaces/ws_1/invitations`, {
       method: "POST",
@@ -292,6 +329,47 @@ test("web_board_routes proxies team workspaces/invites/promote/sync/drafts/comme
     assert.ok(
       recorded.some((r) => r.path === "/api/v1/team/drafts" && r.query === "?project_id=proj_1"),
     );
+
+    const validDigest = createHash("sha256").update("verified!").digest("hex");
+    const tamperedDigest = "a".repeat(64);
+    const deadDigest = "d".repeat(64);
+
+    const artRaw = await fetch(`${baseUrl}/api/runlark/artifacts/${validDigest}`);
+    assert.equal(artRaw.status, 200);
+    assert.equal(artRaw.headers.get("x-runlark-sha256-verified"), "true");
+    assert.equal(artRaw.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(artRaw.headers.get("content-security-policy"), "default-src 'none'; sandbox");
+    assert.equal(await artRaw.text(), "verified!");
+
+    const artMeta = await (
+      await fetch(`${baseUrl}/api/runlark/artifacts/${validDigest}?meta=true`)
+    ).json();
+    assert.equal(artMeta.digest_sha256, validDigest);
+
+    const artBadDigest = await fetch(`${baseUrl}/api/runlark/artifacts/not-a-sha256`);
+    assert.equal(artBadDigest.status, 400);
+    assert.equal(((await artBadDigest.json()) as { error: string }).error, "invalid_digest");
+
+    const artTampered = await fetch(`${baseUrl}/api/runlark/artifacts/${tamperedDigest}`);
+    assert.equal(artTampered.status, 500);
+    assert.equal(artTampered.headers.get("x-runlark-sha256-verified"), null);
+    assert.equal(((await artTampered.json()) as { error: string }).error, "corrupt_artifact");
+
+    const artCorrupt = await fetch(`${baseUrl}/api/runlark/artifacts/${deadDigest}`);
+    assert.equal(artCorrupt.status, 500);
+    const corruptJson = (await artCorrupt.json()) as { error: string };
+    assert.equal(corruptJson.error, "corrupt_artifact");
+
+    const badTraversal = await fetch(
+      `${baseUrl}/api/runlark/team/workspaces/ws%2f..%2fb/invitations`,
+    );
+    assert.equal(badTraversal.status, 400);
+    assert.equal(((await badTraversal.json()) as { error: string }).error, "invalid_path_segment");
+
+    const dotDotNormalized = await fetch(
+      `${baseUrl}/api/runlark/team/workspaces/%2e%2e/invitations`,
+    );
+    assert.ok(dotDotNormalized.status === 400 || dotDotNormalized.status === 404);
 
     const badUri = await fetch(`${baseUrl}/api/runlark/team/workspaces/%ZZ/members`);
     assert.equal(badUri.status, 400);

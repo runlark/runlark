@@ -1,5 +1,13 @@
 import type { Locale, RunlarkStrings } from "./i18n";
 import type { DaemonEventItem, DaemonQuestion, RunStatus } from "./runlark-types";
+import type {
+  OfflineDraft,
+  ProjectOwnershipMode,
+  RunOwnership,
+  RunnerRegistration,
+  TaskComment,
+  WorkspaceMember,
+} from "./team-types";
 
 export type TaskStage = "inbox" | "ready" | "in_progress" | "acceptance" | "done";
 export type TaskKind = "standard" | "quick_fix";
@@ -29,6 +37,7 @@ export interface CostSummary {
   readonly known_micro_usd: number;
   readonly held_micro_usd: number;
   readonly unknown_attempts: number;
+  readonly unknown_reasons?: readonly string[];
 }
 
 export interface ProjectSummary {
@@ -39,6 +48,9 @@ export interface ProjectSummary {
   readonly max_concurrent_runs: number;
   readonly policy_digest: string;
   readonly budget_policy: BudgetPolicy;
+  readonly ownership?: ProjectOwnershipMode;
+  readonly last_cursor_seq?: number;
+  readonly revision?: number;
   readonly created_at: number;
   readonly updated_at: number;
 }
@@ -91,13 +103,15 @@ export interface RunRecord {
 export interface AttemptRecord {
   readonly id: string;
   readonly run_id: string;
-  readonly attempt_number: number;
+  readonly attempt_no?: number;
+  readonly attempt_number?: number;
   readonly workflow_stage: WorkflowStage;
   readonly outcome: { readonly status: string; readonly error?: string; readonly reason?: string };
   readonly cost_micro_usd: number | null;
   readonly unknown_cost_reason?: string | null;
   readonly repair_reason?: string | null;
   readonly started_at: number;
+  readonly ended_at?: number | null;
   readonly finished_at?: number | null;
 }
 
@@ -105,7 +119,7 @@ export interface DecisionRecord {
   readonly id: string;
   readonly task_id: string;
   readonly run_id: string;
-  readonly kind: "accept" | "request_changes";
+  readonly kind: "accept" | "request_changes" | "approve_plan";
   readonly actor: string;
   readonly plan_version: number;
   readonly head_sha: string;
@@ -128,10 +142,12 @@ export interface ArtifactItem {
 export interface BoardTaskEntry {
   readonly task: TaskRecord;
   readonly latest_run: RunRecord | null;
+  readonly latest_run_ownership?: RunOwnership | null;
   readonly session_revision?: number | null;
   readonly attempts: readonly AttemptRecord[];
   readonly cost_summary: CostSummary;
   readonly decisions: readonly DecisionRecord[];
+  readonly comments?: readonly TaskComment[];
   readonly artifacts: readonly ArtifactItem[];
   readonly pending_questions: readonly DaemonQuestion[];
 }
@@ -152,6 +168,8 @@ export interface SlotSummary {
 
 export interface BoardResponse {
   readonly project: ProjectSummary | null;
+  readonly ownership_mode?: ProjectOwnershipMode;
+  readonly last_cursor_seq?: number;
   readonly columns: BoardColumns;
   readonly tasks: readonly BoardTaskEntry[];
   readonly active_runs: readonly RunRecord[];
@@ -160,6 +178,10 @@ export interface BoardResponse {
   readonly cost_summary: CostSummary;
   readonly decisions: readonly DecisionRecord[];
   readonly pending_questions: readonly DaemonQuestion[];
+  readonly pending_drafts?: readonly OfflineDraft[];
+  readonly runners?: readonly RunnerRegistration[];
+  readonly members?: readonly WorkspaceMember[];
+  readonly run_ownerships?: Readonly<Record<string, RunOwnership>>;
   readonly slots: SlotSummary;
 }
 
@@ -239,7 +261,11 @@ export interface BoardApiClient {
   ): Promise<TaskRecord>;
   startTask(
     taskId: string,
-    input?: { readonly prompt?: string; readonly expected_revision?: number },
+    input?: {
+      readonly prompt?: string;
+      readonly expected_revision?: number;
+      readonly runner_id?: string;
+    },
   ): Promise<{ readonly task: TaskRecord; readonly run: RunRecord; readonly admitted: boolean }>;
   acceptTask(
     taskId: string,

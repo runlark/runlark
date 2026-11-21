@@ -132,6 +132,44 @@ pub async fn revoke_invitation(
     row_to_invitation(&row)
 }
 
+/// Lists workspace invitations (newest first) without exposing secret token hashes.
+///
+/// # Errors
+/// Returns [`ServerError::Forbidden`] if actor lacks `InviteMembers` permission.
+pub async fn list_invitations(
+    pool: &Pool,
+    actor: &AuthenticatedUser,
+    workspace_id: &WorkspaceId,
+) -> Result<Vec<WorkspaceInvitation>, ServerError> {
+    let client = get_client(pool).await?;
+    authorize_member(
+        &client,
+        workspace_id,
+        &actor.user_id,
+        WorkspaceAction::InviteMembers,
+    )
+    .await?;
+
+    let rows = client
+        .query(
+            concat!(
+                "SELECT invite_id, workspace_id, invitee_hint, role, status, invited_by, ",
+                "expires_at, created_at, accepted_at, accepted_by ",
+                "FROM workspace_invitations ",
+                "WHERE workspace_id = $1 ",
+                "ORDER BY created_at DESC, invite_id ASC",
+            ),
+            &[&workspace_id.as_ref()],
+        )
+        .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(row_to_invitation(&row)?);
+    }
+    Ok(out)
+}
+
 /// Accepts an invitation token, enrolling the caller in `workspace_members` and issuing a token.
 ///
 /// Unauthenticated callers cannot claim an existing `user_id` (`401 Unauthorized`); authenticated

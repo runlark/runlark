@@ -11,12 +11,16 @@ import {
   type TaskStage,
 } from "../board-types";
 import type { Locale, RunlarkStrings } from "../i18n";
+import type { TeamStrings } from "../team-i18n";
+import type { RunnerRegistration } from "../team-types";
 import { StatusBadge } from "./StatusBadge";
 import { DragGripSvg, MoreDotsSvg, PinIconSvg } from "./SvgIcons";
 
 export interface BoardCardProps {
   readonly entry: BoardTaskEntry;
   readonly strings: RunlarkStrings;
+  readonly teamStrings?: TeamStrings;
+  readonly runners?: readonly RunnerRegistration[];
   readonly locale: Locale;
   readonly isDragging: boolean;
   readonly moveDisabled: boolean;
@@ -29,6 +33,8 @@ export interface BoardCardProps {
 export function BoardCard({
   entry,
   strings,
+  teamStrings,
+  runners,
   locale,
   isDragging,
   moveDisabled,
@@ -64,9 +70,14 @@ export function BoardCard({
     };
   }, [menuOpen]);
 
-  const { task, latest_run: run, cost_summary: cost } = entry;
+  const { task, latest_run: run, latest_run_ownership: ownership, cost_summary: cost } = entry;
   const ownDecision = hasOwnPendingDecision(entry);
   const runStatus = normalizeRunStatusValue(run?.status);
+  const assignedRunnerId = ownership?.assigned_runner_id ?? null;
+  const assignedRunner = assignedRunnerId
+    ? runners?.find((r) => r.id === assignedRunnerId)
+    : undefined;
+  const commentCount = entry.comments?.length ?? 0;
 
   const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     const enabled = itemRefs.current.filter(
@@ -234,6 +245,36 @@ export function BoardCard({
 
           {ownDecision ? (
             <StatusBadge status="waiting_for_approval" customLabel={strings.decisionPendingLabel} />
+          ) : null}
+
+          {assignedRunnerId && ownership ? (
+            <div className="rl-card-meta-row" data-testid={`rl-card-runner-${task.id}`}>
+              {ownership.runner_unreachable ? (
+                <StatusBadge
+                  status="unknown"
+                  customTone="unknown"
+                  customLabel={
+                    teamStrings?.runnerUnreachableBadge ?? "Runner unreachable · no auto-takeover"
+                  }
+                />
+              ) : (
+                <span className="rl-badge rl-badge-neutral rl-mono">
+                  {assignedRunner?.name ?? assignedRunnerId} ·{" "}
+                  {strings.cardLeaseEpoch(ownership.lease_epoch)}
+                </span>
+              )}
+              {commentCount > 0 ? (
+                <span className="rl-meta-value" data-testid={`rl-card-comments-${task.id}`}>
+                  {strings.cardCommentCount(commentCount)}
+                </span>
+              ) : null}
+            </div>
+          ) : commentCount > 0 ? (
+            <div className="rl-card-meta-row">
+              <span className="rl-meta-value" data-testid={`rl-card-comments-${task.id}`}>
+                {strings.cardCommentCount(commentCount)}
+              </span>
+            </div>
           ) : null}
 
           <div className="rl-card-meta-row">

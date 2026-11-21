@@ -1,5 +1,6 @@
 pub mod cas_metadata_test;
 pub mod command_guards_test;
+pub mod invitations_list_test;
 pub mod ownership_test;
 pub mod reconciliation_and_revision_test;
 pub mod sync_and_cas_test;

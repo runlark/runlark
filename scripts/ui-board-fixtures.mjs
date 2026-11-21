@@ -129,14 +129,13 @@ export function createBoardState() {
             {
                 id: `att_${id}`,
                 run_id: `run_${id}`,
-                attempt_number: 1,
+                attempt_no: 1,
                 workflow_stage: wf,
                 outcome: { status: "succeeded" },
                 cost_micro_usd: unknownAttempts > 0 ? null : 15_000,
                 unknown_cost_reason: unknownAttempts > 0 ? "missing provider pricing" : null,
-                created_at: 1000,
                 started_at: 1000,
-                finished_at: 1100,
+                ended_at: 1100,
             },
         ],
         cost_summary: {

@@ -6,6 +6,7 @@ import type {
   DaemonSession,
   RunlarkApiClient,
 } from "./runlark-types";
+import { TeamApiError } from "./team-types";
 
 export interface HttpClientOptions {
   readonly baseUrl?: string;
@@ -20,17 +21,42 @@ function createId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-async function readErrorMessage(res: Response): Promise<string> {
+async function readApiError(res: Response): Promise<TeamApiError> {
   const text = await res.text();
-  if (!text) {
-    return `HTTP ${res.status}`;
+  let code = `http_${String(res.status)}`;
+  let serverCode: string | null = null;
+  let message = text || `HTTP ${String(res.status)}`;
+  let expectedRevision: number | null = null;
+  let actualRevision: number | null = null;
+  if (text) {
+    try {
+      const parsed = JSON.parse(text) as {
+        error?: string;
+        server_code?: string;
+        message?: string;
+        expected_revision?: number;
+        actual_revision?: number;
+      };
+      if (typeof parsed.error === "string" && parsed.error) code = parsed.error;
+      if (typeof parsed.server_code === "string" && parsed.server_code) {
+        serverCode = parsed.server_code;
+      }
+      message = parsed.message ?? parsed.error ?? text;
+      if (typeof parsed.expected_revision === "number") expectedRevision = parsed.expected_revision;
+      if (typeof parsed.actual_revision === "number") actualRevision = parsed.actual_revision;
+    } catch {
+      // plain-text error body
+    }
   }
-  try {
-    const parsed = JSON.parse(text) as { message?: string; error?: string };
-    return parsed.message ?? parsed.error ?? text;
-  } catch {
-    return text;
-  }
+  return new TeamApiError({
+    httpStatus: res.status,
+    code,
+    serverCode,
+    message,
+    expectedRevision,
+    actualRevision,
+    isOffline: res.status === 503 && code === "team_server_offline",
+  });
 }
 
 export function createRunlarkApiClient(options: HttpClientOptions = {}): RunlarkApiClient {
@@ -48,7 +74,7 @@ export function createRunlarkApiClient(options: HttpClientOptions = {}): Runlark
         return null;
       }
       if (!res.ok) {
-        throw new Error(await readErrorMessage(res));
+        throw await readApiError(res);
       }
       return (await res.json()) as DaemonSession;
     },
@@ -64,7 +90,7 @@ export function createRunlarkApiClient(options: HttpClientOptions = {}): Runlark
         }),
       });
       if (!res.ok) {
-        throw new Error(await readErrorMessage(res));
+        throw await readApiError(res);
       }
       return (await res.json()) as DaemonSession;
     },
@@ -80,7 +106,7 @@ export function createRunlarkApiClient(options: HttpClientOptions = {}): Runlark
         return [];
       }
       if (!res.ok) {
-        throw new Error(await readErrorMessage(res));
+        throw await readApiError(res);
       }
       return (await res.json()) as DaemonQuestion[];
     },
@@ -105,7 +131,7 @@ export function createRunlarkApiClient(options: HttpClientOptions = {}): Runlark
         return [];
       }
       if (!res.ok) {
-        throw new Error(await readErrorMessage(res));
+        throw await readApiError(res);
       }
       return (await res.json()) as DaemonEventItem[];
     },
@@ -118,7 +144,7 @@ export function createRunlarkApiClient(options: HttpClientOptions = {}): Runlark
           body: JSON.stringify({ prompt, commandId: createId("ui_send") }),
         });
         if (!res.ok) {
-          throw new Error(await readErrorMessage(res));
+          throw await readApiError(res);
         }
         return (await res.json()) as CommandActionResult;
       }
@@ -141,7 +167,7 @@ export function createRunlarkApiClient(options: HttpClientOptions = {}): Runlark
         }),
       });
       if (!res.ok) {
-        throw new Error(await readErrorMessage(res));
+        throw await readApiError(res);
       }
       return (await res.json()) as CommandActionResult;
     },
@@ -154,7 +180,7 @@ export function createRunlarkApiClient(options: HttpClientOptions = {}): Runlark
           body: JSON.stringify({}),
         });
         if (!res.ok) {
-          throw new Error(await readErrorMessage(res));
+          throw await readApiError(res);
         }
         return (await res.json()) as CommandActionResult;
       }
@@ -175,7 +201,7 @@ export function createRunlarkApiClient(options: HttpClientOptions = {}): Runlark
         }),
       });
       if (!res.ok) {
-        throw new Error(await readErrorMessage(res));
+        throw await readApiError(res);
       }
       return (await res.json()) as CommandActionResult;
     },
@@ -190,7 +216,7 @@ export function createRunlarkApiClient(options: HttpClientOptions = {}): Runlark
           }),
         });
         if (!res.ok) {
-          throw new Error(await readErrorMessage(res));
+          throw await readApiError(res);
         }
         return (await res.json()) as CommandActionResult;
       }
@@ -211,7 +237,7 @@ export function createRunlarkApiClient(options: HttpClientOptions = {}): Runlark
         }),
       });
       if (!res.ok) {
-        throw new Error(await readErrorMessage(res));
+        throw await readApiError(res);
       }
       return (await res.json()) as CommandActionResult;
     },
@@ -227,7 +253,7 @@ export function createRunlarkApiClient(options: HttpClientOptions = {}): Runlark
           },
         );
         if (!res.ok) {
-          throw new Error(await readErrorMessage(res));
+          throw await readApiError(res);
         }
         return (await res.json()) as CommandActionResult;
       }
@@ -247,7 +273,7 @@ export function createRunlarkApiClient(options: HttpClientOptions = {}): Runlark
         }),
       });
       if (!res.ok) {
-        throw new Error(await readErrorMessage(res));
+        throw await readApiError(res);
       }
       return (await res.json()) as CommandActionResult;
     },
@@ -264,7 +290,7 @@ export function createRunlarkApiClient(options: HttpClientOptions = {}): Runlark
         }),
       });
       if (!res.ok) {
-        throw new Error(await readErrorMessage(res));
+        throw await readApiError(res);
       }
       return (await res.json()) as AnswerQuestionResult;
     },

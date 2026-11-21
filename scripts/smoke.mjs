@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { act } from "react";
 import { runA1SoloAlphaSmoke } from "./smoke-a1.mjs";
+import { runA2TeamSmoke } from "./smoke-a2.mjs";
 import {
     apiJson,
     getFreePort,
@@ -22,10 +23,13 @@ import {
 console.log("Verifying DSH controller patch & building DSH client UI bundle...");
 execFileSync("node", ["scripts/apply-dsh-patch.mjs", "--check"], { stdio: "inherit" });
 execFileSync("node", ["scripts/build-dsh-client.mjs"], { stdio: "inherit" });
-console.log("Compiling runlark binary...");
-execFileSync("cargo", ["build", "--bin", "runlark"], { stdio: "inherit" });
+console.log("Compiling runlark & runlark-server binaries...");
+execFileSync("cargo", ["build", "--bin", "runlark", "--bin", "runlark-server"], {
+    stdio: "inherit",
+});
 
 const binaryPath = join(process.cwd(), "target", "debug", "runlark");
+const serverBinaryPath = join(process.cwd(), "target", "debug", "runlark-server");
 console.log("Verifying first-party workflow package via `runlark plugin inspect/validate`...");
 const inspectOut = execFileSync(
     binaryPath,
@@ -507,3 +511,4 @@ try {
 }
 
 await runA1SoloAlphaSmoke(binaryPath);
+await runA2TeamSmoke(binaryPath, serverBinaryPath);

@@ -10,9 +10,10 @@ import {
   ProjectsIconSvg,
   RunlarkLockupSvg,
   RunlarkMarkSvg,
+  TeamIconSvg,
 } from "./SvgIcons";
 
-export type WorkbenchSection = "board" | "decisions" | "projects" | "plugins";
+export type WorkbenchSection = "board" | "decisions" | "projects" | "plugins" | "team";
 
 export interface BreadcrumbSegment {
   readonly label: string;
@@ -29,8 +30,10 @@ export interface WorkbenchShellProps {
   readonly selectedProjectId: string | null;
   readonly onSelectProject: (projectId: string) => void;
   readonly decisionCount: number;
+  readonly teamBadgeCount?: number;
   readonly breadcrumbs: readonly BreadcrumbSegment[];
   readonly headerActions?: ReactNode;
+  readonly topBannerSlot?: ReactNode;
   readonly embedded?: boolean;
   readonly children: ReactNode;
 }
@@ -45,8 +48,10 @@ export function WorkbenchShell({
   selectedProjectId,
   onSelectProject,
   decisionCount,
+  teamBadgeCount,
   breadcrumbs,
   headerActions,
+  topBannerSlot,
   embedded = false,
   children,
 }: WorkbenchShellProps): ReactNode {
@@ -102,6 +107,12 @@ export function WorkbenchShell({
       count: projects.length,
     },
     { id: "plugins", label: strings.navPlugins, icon: <PluginsIconSvg /> },
+    {
+      id: "team",
+      label: strings.navTeam,
+      icon: <TeamIconSvg />,
+      ...(teamBadgeCount && teamBadgeCount > 0 ? { count: teamBadgeCount } : {}),
+    },
   ];
 
   const renderRailContent = (inDrawer: boolean): ReactNode => (
@@ -138,6 +149,7 @@ export function WorkbenchShell({
               type="button"
               className="rl-rail-item"
               aria-current={section === item.id ? "page" : undefined}
+              data-testid={inDrawer ? `rl-drawer-nav-${item.id}` : `rl-nav-${item.id}`}
               onClick={() => {
                 onSelectSection(item.id);
                 if (inDrawer) setDrawerOpen(false);
@@ -162,6 +174,7 @@ export function WorkbenchShell({
               type="button"
               className="rl-rail-item"
               aria-current={section === item.id ? "page" : undefined}
+              data-testid={inDrawer ? `rl-drawer-nav-${item.id}` : `rl-nav-${item.id}`}
               onClick={() => {
                 onSelectSection(item.id);
                 if (inDrawer) setDrawerOpen(false);
@@ -292,6 +305,8 @@ export function WorkbenchShell({
           {headerActions ? <div className="rl-actions-row">{headerActions}</div> : null}
         </div>
 
+        {topBannerSlot ?? null}
+
         <main className="rl-main-content">{children}</main>
 
         <footer className="rl-footer-strip">{strings.sampleFooterNotice}</footer>
@@ -304,6 +319,7 @@ export function WorkbenchShell({
             type="button"
             className="rl-mobile-nav-btn"
             aria-current={section === item.id ? "page" : undefined}
+            data-testid={`rl-mobile-nav-${item.id}`}
             onClick={() => onSelectSection(item.id)}
           >
             {item.icon}

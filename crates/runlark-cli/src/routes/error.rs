@@ -9,6 +9,8 @@ use serde::Serialize;
 #[derive(Debug, Serialize)]
 pub struct ApiErrorBody {
     pub error: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_code: Option<String>,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_revision: Option<u64>,
@@ -25,6 +27,7 @@ pub fn api_error(status: StatusCode, error: &'static str, message: impl Into<Str
         status,
         Json(ApiErrorBody {
             error,
+            server_code: None,
             message: message.into(),
             expected_revision: None,
             actual_revision: None,
@@ -65,6 +68,7 @@ pub fn storage_error_to_http(err: StorageError) -> ApiError {
             StatusCode::CONFLICT,
             Json(ApiErrorBody {
                 error: "revision_mismatch",
+                server_code: Some("revision_mismatch".to_string()),
                 message: format!("Revision mismatch: expected {expected}, actual {actual}"),
                 expected_revision: Some(expected.0),
                 actual_revision: Some(actual.0),
@@ -139,13 +143,14 @@ pub fn team_server_error_to_http(err: TeamServerError) -> ApiError {
             api_error(StatusCode::SERVICE_UNAVAILABLE, "team_server_offline", msg)
         }
         TeamServerError::Conflict {
+            code,
             message,
             current_revision,
-            ..
         } => (
             StatusCode::CONFLICT,
             Json(ApiErrorBody {
                 error: "team_conflict",
+                server_code: Some(code),
                 message,
                 expected_revision: None,
                 actual_revision: current_revision,

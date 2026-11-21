@@ -6,6 +6,8 @@ import type { BoardApiClient } from "@/common/board-types";
 import { getStrings, type Locale } from "@/common/i18n";
 import { createRunlarkApiClient } from "@/common/runlark-http";
 import type { RunlarkApiClient } from "@/common/runlark-types";
+import { createTeamApiClient } from "@/common/team-http";
+import type { TeamApiClient } from "@/common/team-types";
 import { ActionButton } from "@/common/ui/ActionButton";
 import { WorkbenchTheme } from "@/common/ui/WorkbenchTheme";
 import { SessionSidebarPage } from "@/pages/SessionSidebarPage";
@@ -18,6 +20,7 @@ export interface RunlarkSidebarAppProps {
   readonly apiMode?: "dsh-proxy" | "daemon";
   readonly apiClient?: RunlarkApiClient;
   readonly boardClient?: BoardApiClient;
+  readonly teamClient?: TeamApiClient;
   readonly autoStartSync?: boolean;
   readonly pollWaitMs?: number;
   readonly onOpenBoardTab?: () => void;
@@ -27,6 +30,7 @@ export interface RunlarkWorkbenchAppProps {
   readonly apiBaseUrl?: string;
   readonly apiMode?: "dsh-proxy" | "daemon";
   readonly apiClient?: BoardApiClient;
+  readonly teamClient?: TeamApiClient;
   readonly initialLocale?: Locale;
   readonly autoStartSync?: boolean;
   readonly pollIntervalMs?: number;
@@ -40,6 +44,7 @@ export function RunlarkSidebarApp({
   apiMode = "dsh-proxy",
   apiClient,
   boardClient,
+  teamClient,
   autoStartSync = true,
   pollWaitMs,
   onOpenBoardTab,
@@ -54,6 +59,10 @@ export function RunlarkSidebarApp({
     () => boardClient ?? createBoardApiClient({ baseUrl: apiBaseUrl, mode: apiMode }),
     [boardClient, apiBaseUrl, apiMode],
   );
+  const resolvedTeamClient = useMemo(
+    () => teamClient ?? createTeamApiClient({ baseUrl: apiBaseUrl, mode: apiMode }),
+    [teamClient, apiBaseUrl, apiMode],
+  );
   const strings = getStrings("en");
 
   return (
@@ -62,6 +71,7 @@ export function RunlarkSidebarApp({
         {surface === "board" ? (
           <WorkbenchPage
             apiClient={resolvedBoardClient}
+            teamClient={resolvedTeamClient}
             autoStartSync={autoStartSync}
             embedded
             headerActions={
@@ -107,6 +117,7 @@ export function RunlarkWorkbenchApp({
   apiBaseUrl = "/api/runlark",
   apiMode = "dsh-proxy",
   apiClient,
+  teamClient,
   initialLocale = "en",
   autoStartSync = true,
   pollIntervalMs,
@@ -117,12 +128,17 @@ export function RunlarkWorkbenchApp({
     () => apiClient ?? createBoardApiClient({ baseUrl: apiBaseUrl, mode: apiMode }),
     [apiClient, apiBaseUrl, apiMode],
   );
+  const resolvedTeamClient = useMemo(
+    () => teamClient ?? createTeamApiClient({ baseUrl: apiBaseUrl, mode: apiMode }),
+    [teamClient, apiBaseUrl, apiMode],
+  );
 
   return (
     <reatomContext.Provider value={frame}>
       <WorkbenchTheme>
         <WorkbenchPage
           apiClient={client}
+          teamClient={resolvedTeamClient}
           initialLocale={initialLocale}
           autoStartSync={autoStartSync}
           {...(pollIntervalMs !== undefined ? { pollIntervalMs } : {})}

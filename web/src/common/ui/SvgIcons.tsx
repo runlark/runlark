@@ -263,3 +263,58 @@ export function DropArrowSvg(): ReactNode {
     </svg>
   );
 }
+
+export function TeamIconSvg(): ReactNode {
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <circle cx="6" cy="5.5" r="2.25" stroke="currentColor" strokeWidth="1.4" />
+      <path
+        d="M2.2 13C2.6 10.8 4.1 9.6 6 9.6C7.9 9.6 9.4 10.8 9.8 13"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
+      <circle cx="11.2" cy="6.2" r="1.75" stroke="currentColor" strokeWidth="1.3" />
+      <path
+        d="M10.2 9.9C11.9 10 13.3 11 13.8 13"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+export function ShieldCheckIconSvg(): ReactNode {
+  return (
+    <svg
+      width={14}
+      height={14}
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        d="M8 2L13 4V7.8C13 10.8 10.9 13.2 8 14C5.1 13.2 3 10.8 3 7.8V4L8 2Z"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M5.6 8.1L7.3 9.7L10.6 6.4"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

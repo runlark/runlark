@@ -10,7 +10,7 @@ members = [
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.94.1"
+rust-version = "1.95.0"
 license = "Apache-2.0"
 authors = ["Runlark Authors"]
 publish = false
@@ -51,7 +51,7 @@ sha2 = "0.10"
 hex = "0.4"
 tokio-postgres = "0.7"
 deadpool-postgres = "0.14"
-wasmtime = { version = "36.0.21", default-features = false, features = [
+wasmtime = { version = "48.0.9", default-features = false, features = [
   "cranelift",
   "component-model",
   "runtime",

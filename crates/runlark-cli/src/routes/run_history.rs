@@ -10,9 +10,9 @@ use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::Response;
 use runlark_domain::{
-    ArtifactDigest, ArtifactRef, Attempt, AttemptId, AttemptOutcome, BoardCommand, CommandId,
-    CostSummary, Decision, RecordAttemptCommand, Revision, Run, RunId, TaskId, TeamCommand,
-    Timestamp, WorkflowStage,
+    ArtifactDigest, ArtifactKind, ArtifactRef, Attempt, AttemptId, AttemptOutcome, BoardCommand,
+    CommandId, CostSummary, Decision, RecordAttemptCommand, Revision, Run, RunId, TaskId,
+    TeamCommand, Timestamp, WorkflowStage,
 };
 use runlark_local::{
     ArtifactCasStore, AttemptStore, DecisionStore, EventStore, QuestionStore, RunQueries,
@@ -204,6 +204,9 @@ pub async fn get_run_diff(
         })?;
 
     let wt = run.worktree_path.clone();
+    if wt.trim().is_empty() {
+        return load_verified_cas_diff(&state, &conn, &run);
+    }
     let base_hint = run.base_sha.clone();
     let snap = tokio::task::spawn_blocking(move || {
         compute_worktree_diff(StdPath::new(&wt), base_hint.as_deref())
@@ -232,6 +235,50 @@ pub async fn get_run_diff(
         diff: snap.diff_text,
         diff_bytes: snap.diff_bytes,
         digest_sha256: artifact.digest_sha256.to_string(),
+    }))
+}
+
+fn load_verified_cas_diff(
+    state: &AppState,
+    conn: &runlark_local::Connection,
+    run: &Run,
+) -> Result<Json<RunDiffResponse>, ApiError> {
+    let linked =
+        ArtifactCasStore::list_artifacts_for_run(conn, &run.id).map_err(storage_error_to_http)?;
+    let Some((meta, _)) = linked
+        .into_iter()
+        .rev()
+        .find(|(m, _)| m.kind == ArtifactKind::Diff)
+    else {
+        return Err(api_error(
+            StatusCode::CONFLICT,
+            "git_diff_failed",
+            "Run has no local worktree and no synced CAS diff artifact",
+        ));
+    };
+    let bytes = state
+        .cas_store()
+        .get_bytes(&meta.digest_sha256)
+        .map_err(storage_error_to_http)?;
+    let diff = String::from_utf8_lossy(&bytes).into_owned();
+    let changed_files: Vec<String> = diff
+        .lines()
+        .filter_map(|line| line.strip_prefix("+++ b/"))
+        .map(str::to_string)
+        .collect();
+    let diff_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    Ok(Json(RunDiffResponse {
+        run_id: run.id.0.clone(),
+        base_sha: run.base_sha.clone().unwrap_or_default(),
+        head_sha: run.head_sha.clone().unwrap_or_default(),
+        branch_name: run
+            .task_id
+            .as_ref()
+            .map_or_else(String::new, |tid| format!("runlark/{tid}")),
+        changed_files,
+        diff,
+        diff_bytes,
+        digest_sha256: meta.digest_sha256.to_string(),
     }))
 }
 

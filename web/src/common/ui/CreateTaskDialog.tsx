@@ -8,9 +8,16 @@ export interface CreateTaskDialogProps {
   readonly initialKind: TaskKind;
   readonly submitting: boolean;
   readonly submitError: string | null;
+  readonly offlineBlocked?: boolean;
   readonly strings: RunlarkStrings;
+  readonly saveDraftLabel?: string;
   readonly onClose: () => void;
   readonly onSubmit: (input: {
+    readonly title: string;
+    readonly description: string;
+    readonly kind: TaskKind;
+  }) => void;
+  readonly onSaveOfflineDraft?: (input: {
     readonly title: string;
     readonly description: string;
     readonly kind: TaskKind;
@@ -22,9 +29,12 @@ export function CreateTaskDialog({
   initialKind,
   submitting,
   submitError,
+  offlineBlocked = false,
   strings,
+  saveDraftLabel,
   onClose,
   onSubmit,
+  onSaveOfflineDraft,
 }: CreateTaskDialogProps): ReactNode {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const headingId = useId();
@@ -76,9 +86,12 @@ export function CreateTaskDialog({
         initialKind={initialKind}
         submitting={submitting}
         submitError={submitError}
+        offlineBlocked={offlineBlocked}
         strings={strings}
+        {...(saveDraftLabel !== undefined ? { saveDraftLabel } : {})}
         onClose={onClose}
         onSubmit={onSubmit}
+        {...(onSaveOfflineDraft !== undefined ? { onSaveOfflineDraft } : {})}
       />
     </dialog>
   );
@@ -89,9 +102,12 @@ function CreateTaskFormBody({
   initialKind,
   submitting,
   submitError,
+  offlineBlocked = false,
   strings,
+  saveDraftLabel,
   onClose,
   onSubmit,
+  onSaveOfflineDraft,
 }: Omit<CreateTaskDialogProps, "open"> & { readonly headingId: string }): ReactNode {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -106,6 +122,7 @@ function CreateTaskFormBody({
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
+    if (submitting || offlineBlocked) return;
     const trimmed = title.trim();
     if (!trimmed) {
       setValidationError(strings.createTaskTitleRequired);
@@ -186,9 +203,26 @@ function CreateTaskFormBody({
           type="submit"
           variant="primary"
           label={strings.createTaskSubmit}
-          disabled={submitting}
+          disabled={submitting || offlineBlocked}
           testId="rl-create-task-submit"
         />
+        {onSaveOfflineDraft && saveDraftLabel ? (
+          <ActionButton
+            variant="secondary"
+            label={saveDraftLabel}
+            disabled={submitting}
+            onClick={() => {
+              const trimmed = title.trim();
+              if (!trimmed) {
+                setValidationError(strings.createTaskTitleRequired);
+                return;
+              }
+              setValidationError(null);
+              onSaveOfflineDraft({ title: trimmed, description: description.trim(), kind });
+            }}
+            testId="rl-create-task-draft-btn"
+          />
+        ) : null}
         <ActionButton
           variant="secondary"
           label={strings.cancelBtn}

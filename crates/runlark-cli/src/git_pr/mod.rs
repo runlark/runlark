@@ -86,7 +86,7 @@ pub struct SystemPrRunner {
 impl Default for SystemPrRunner {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_secs(60),
+            timeout: Duration::from_mins(1),
         }
     }
 }

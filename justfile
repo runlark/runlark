@@ -75,7 +75,7 @@ docs:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 
 smoke:
-    node scripts/smoke.mjs
+    node scripts/with-test-postgres.mjs node scripts/smoke.mjs
 
 # The same complete gate runs locally, in pre-push and in CI.
 check: lint test docs smoke

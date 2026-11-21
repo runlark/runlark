@@ -114,7 +114,7 @@ fn team_routes() -> Router<AppState> {
         )
         .route(
             "/api/v1/team/workspaces/{wid}/invitations",
-            post(team_workspaces::create_invitation),
+            get(team_workspaces::list_invitations).post(team_workspaces::create_invitation),
         )
         .route(
             "/api/v1/team/workspaces/{wid}/invitations/{invite_id}/revoke",
