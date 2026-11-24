@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Dependabot больше не предлагает обновления пакетов `@deepseek-ai/*`: DeepSeek Harness удаляется, а его закреплённый патч ломается при каждом обновлении.
+
 - Обновлён `url` до `2.5.9` (вместе с требуемым им `form_urlencoded` `1.2.3`) в `Cargo.lock` для закрытия advisory `RUSTSEC-2026-0592`.
 
 - Завершён этап A2 (командная работа 2–4 человек — PR 3: Team UI, verified CAS, mobile acceptance и сквозной E2E smoke):
