@@ -296,10 +296,10 @@ world rogue-validator {
         UnresolvedPackageGroup::parse("rogue.wit", rogue_contract_wit).expect("rogue WIT parses");
     let pkg_id = resolve.push_group(group).expect("rogue WIT resolves");
     let world_id = resolve
-        .select_world(pkg_id, Some("rogue-validator"))
+        .select_world(&[pkg_id], Some("rogue-validator"))
         .expect("rogue world exists");
     let mut core = wat::parse_str(rogue_module_wat).expect("rogue WAT parses");
-    embed_component_metadata(&mut core, &resolve, world_id, StringEncoding::UTF8)
+    embed_component_metadata(&mut core, &resolve, world_id, StringEncoding::UTF8, false)
         .expect("embed metadata");
     let component_bytes = ComponentEncoder::default()
         .module(&core)

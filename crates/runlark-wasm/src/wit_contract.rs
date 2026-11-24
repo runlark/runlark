@@ -66,11 +66,14 @@ impl WitContract {
     /// or enum cases are missing.
     pub fn parse_str(path_label: &str, source: &str) -> Result<Self, WasmError> {
         let mut resolve = Resolve::default();
-        let group = UnresolvedPackageGroup::parse(path_label, source)
-            .map_err(|err| WasmError::WitContract(format!("WIT parse failed: {err}")))?;
-        let package_id = resolve
-            .push_group(group)
-            .map_err(|err| WasmError::WitContract(format!("WIT resolve failed: {err}")))?;
+        // wit-parser errors carry spans; render them to keep file:line:col context.
+        let group = UnresolvedPackageGroup::parse(path_label, source).map_err(|(map, err)| {
+            WasmError::WitContract(format!("WIT parse failed: {}", err.render(&map)))
+        })?;
+        let package_id = resolve.push_group(group).map_err(|err| {
+            let rendered = err.render(&resolve.source_map);
+            WasmError::WitContract(format!("WIT resolve failed: {rendered}"))
+        })?;
 
         let pkg = resolve
             .packages
