@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Обновлён `url` до `2.5.9` (вместе с требуемым им `form_urlencoded` `1.2.3`) в `Cargo.lock` для закрытия advisory `RUSTSEC-2026-0592`.
+
 - Завершён этап A2 (командная работа 2–4 человек — PR 3: Team UI, verified CAS, mobile acceptance и сквозной E2E smoke):
   - В `web/src` добавлен FEOD-модуль `modules/team-collab` (Reatom v1001 `withAsyncData`/`withAsync`), контракты/клиент/RU+EN локализация (`common/team-{types,http,i18n,i18n-ru}.ts`, `common/team.css`) и чистые presentational-адаптеры `common/ui/{TeamSyncStatusBar,TeamConnectionCard,TeamMembersInvitesPanel,TeamRunnersDraftsPanel,PromoteTeamDialog,RunnerOwnershipPanel,TaskCommentsPanel,CasArtifactEvidencePanel,MobileAcceptanceBar}.tsx` по контракту `web/DESIGN.md`:
     - управление подключениями к командному серверу, workspace, ролями участников (`owner`/`maintainer`/`member`/`viewer`), списком и отзывом приглашений, принятием приглашений и `solo -> team` promotion с явной блокировкой при наличии активных/незавершённых runs;
