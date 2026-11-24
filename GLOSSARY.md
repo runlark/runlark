@@ -54,8 +54,9 @@ One agent turn within a run; the unit that carries cost. RU: «Попытка».
 _Avoid_: try, iteration, turn
 
 **Repair**:
-An attempt that goes back from verification to implementation to fix failed checks. Repairs have their
-own limit. RU: «Попытка исправления».
+An attempt that goes back to fix a failure: failed checks (verification back to implementation) or an
+attempt cut off at the harness's limit (a new step of the same stage). Repairs have their own limit.
+RU: «Попытка исправления».
 _Avoid_: retry, fix loop
 
 **Question**:
@@ -94,7 +95,8 @@ A stop that has been asked for but not yet confirmed. It survives restarts. RU: 
 _Avoid_: stopped, cancelled
 
 **Stopped**:
-A run whose stop was confirmed by the agent, or marked by a person as stopped with an unknown outcome.
+A run whose stop the agent confirmed — including the harness exiting or reporting no live turn while a
+stop was requested, with an unknown outcome — or that a person marked as stopped with an unknown outcome.
 Never set by a timer. RU: «Остановлен».
 _Avoid_: cancelled, killed
 
@@ -153,6 +155,11 @@ _Avoid_: reject, decline
 The decision that fixes one plan version as the one to implement. RU: «Одобрить план».
 _Avoid_: plan accept, sign-off
 
+**Waiting for you**:
+The group of runs that need a person now: an open question, a decision, an interrupted or a quarantined
+run. RU: «Ждут вас».
+_Avoid_: inbox, notifications
+
 **Decision binding**:
 The exact versions a decision refers to: plan version, head and base commits, policy and evidence
 manifest. A decision with an incomplete binding is invalid.
@@ -171,6 +178,10 @@ _Avoid_: artifact, attachment
 **Evidence manifest**:
 The canonical list of a run's evidence items for one head commit. Its digest is what a decision binds.
 _Avoid_: bundle, archive
+
+**Attachment**:
+A file a person adds to a task or run for context. It is never evidence. RU: «Вложение».
+_Avoid_: evidence, artifact
 
 **Publish receipt**:
 The record that a result was published as a pull request. It is not evidence.
@@ -204,6 +215,11 @@ _Avoid_: agent, runtime, plugin
 **Runner**:
 A machine that executes runs on behalf of a team.
 _Avoid_: agent, worker
+
+**Client channel**:
+The connection a request arrives on, which fixes who is acting: the user's socket is the human channel, a
+run's tool server is that run's agent channel. Decisions arrive only on the human channel.
+_Avoid_: session, origin
 
 ## Workflows
 
