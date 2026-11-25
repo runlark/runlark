@@ -27,7 +27,7 @@
     "@deepseek-ai/dsh-client-ui-session": "0.2.2-rc.3",
     "@deepseek-ai/dsh-client-ui-sidebar-right": "0.2.2-rc.3",
     "@deepseek-ai/dsh-client-ui-slots": "0.2.2-rc.3",
-    "@mantine/core": "8.3.18",
+    "@mantine/core": "9.8.2",
     "@mantine/hooks": "8.3.18",
     "@o-feod/oxlint-structure-plugin": "0.1.7",
     "@reatom/core": "1001.3.0",
