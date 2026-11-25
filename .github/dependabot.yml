@@ -11,6 +11,17 @@ updates:
     ignore:
       # DeepSeek Harness is being removed (docs/adr/0005); its pinned patch breaks on every bump.
       - dependency-name: "@deepseek-ai/*"
+      # web/ is retired with DeepSeek Harness (docs/adr/0007); major UI migrations would be thrown away.
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@mantine/*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:

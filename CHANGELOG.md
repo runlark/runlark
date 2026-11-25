@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Dependabot больше не предлагает мажорные обновления React и Mantine: `web/` удаляется вместе с DeepSeek Harness, миграция была бы выброшенной работой.
 - Проект распространяется под лицензией Apache License 2.0: добавлен `LICENSE`, поле `license` в `package.json` и `packages/dsh-plugin/package.json`, обновлены README и `docs/development.md`.
 
 - Обновлён `url` до `2.5.9` (вместе с требуемым им `form_urlencoded` `1.2.3`) в `Cargo.lock` для закрытия advisory `RUSTSEC-2026-0592`.
