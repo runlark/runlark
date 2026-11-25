@@ -2,10 +2,14 @@
 
 ## Unreleased
 
+- Обновлён `url` до `2.5.9` (вместе с требуемым им `form_urlencoded` `1.2.3`) в `Cargo.lock` для закрытия advisory `RUSTSEC-2026-0592`.
+- Обновлены все зависимости и Rust crates закреплены точными версиями `=x.y.z`:
+  - Rust: `reqwest` `0.13` (явно `native-tls` вместо нового default rustls/aws-lc-rs, плюс feature `query`), `tokio-tungstenite` `0.30`, `tower-http` `0.7`, `sha2` `0.11`, `wit-parser`/`wit-component` `0.263`, `wat` `1.263`, `wasmtime` LTS `48.0.10`, остальные crates до последних patch/minor; удалены неиспользуемые workspace-зависимости `chrono` и `tower`.
+  - `runlark-wasm` адаптирован к API `wit-parser`/`wit-component` `0.263` (сохраняется рендер ошибок WIT с позицией в исходнике); `workflows/solo-default/validator.wasm` пересобран из `validator.wat` новым encoder и digest в `manifest.json` обновлён.
+  - npm devDependencies обновлены в пределах текущих major (`oxfmt` `0.80.0`, `oxlint` `1.95.0`, `markdownlint-cli2` `0.24.2`, `@types/react` `18.3.31`) и транзитивные пакеты в `package-lock.json`; `@deepseek-ai/*` остаются `0.2.2-rc.3` из-за патча контроллера в `packages/dsh-plugin/patches`.
+  - GitHub Actions: `jdx/mise-action` `v5.3.0` (SHA pin; версия mise и её sha256 без изменений); `actions/checkout` `v7.0.1` и `actions/upload-artifact` `v7.0.2` уже последние.
 - Добавлены словарь предметной области `GLOSSARY.md` и решения `docs/adr/0001`–`0009`: модель угроз «честный агент», тактический DDD через strangler, сначала доска, сначала open source с self-host, CLI и JSON-RPC-сервер без DeepSeek Harness, агенты через ACP с отдельным источником квоты, нативный UI на GPUI, вычисляемые колонки доски, decider'ы, пригодные для доказательства в Lean. Это решения направления; код ещё не приведён к ним.
 - Dependabot больше не предлагает обновления пакетов `@deepseek-ai/*`: DeepSeek Harness удаляется, а его закреплённый патч ломается при каждом обновлении.
-
-- Обновлён `url` до `2.5.9` (вместе с требуемым им `form_urlencoded` `1.2.3`) в `Cargo.lock` для закрытия advisory `RUSTSEC-2026-0592`.
 
 - Завершён этап A2 (командная работа 2–4 человек — PR 3: Team UI, verified CAS, mobile acceptance и сквозной E2E smoke):
   - В `web/src` добавлен FEOD-модуль `modules/team-collab` (Reatom v1001 `withAsyncData`/`withAsync`), контракты/клиент/RU+EN локализация (`common/team-{types,http,i18n,i18n-ru}.ts`, `common/team.css`) и чистые presentational-адаптеры `common/ui/{TeamSyncStatusBar,TeamConnectionCard,TeamMembersInvitesPanel,TeamRunnersDraftsPanel,PromoteTeamDialog,RunnerOwnershipPanel,TaskCommentsPanel,CasArtifactEvidencePanel,MobileAcceptanceBar}.tsx` по контракту `web/DESIGN.md`:

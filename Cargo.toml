@@ -30,33 +30,40 @@ runlark-local = { path = "crates/runlark-local", version = "0.1.0" }
 runlark-wasm = { path = "crates/runlark-wasm", version = "0.1.0" }
 runlark-cli = { path = "crates/runlark-cli", version = "0.1.0" }
 
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-thiserror = "2.0"
-chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
-uuid = { version = "1.10", features = ["v4", "serde"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-rusqlite = { version = "0.43", features = ["bundled"] }
-tokio = { version = "1.40", features = ["full"] }
-axum = "0.8"
-tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace"] }
-clap = { version = "4.5", features = ["derive"] }
-tempfile = "3.12"
-reqwest = { version = "0.12", features = ["json"] }
-tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
-futures-util = "0.3"
-sha2 = "0.10"
-hex = "0.4"
-tokio-postgres = "0.7"
-deadpool-postgres = "0.14"
-wasmtime = { version = "48.0.9", default-features = false, features = [
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+thiserror = "=2.0.21"
+uuid = { version = "=1.29.3", features = ["v4", "serde"] }
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
+rusqlite = { version = "=0.43.0", features = ["bundled"] }
+tokio = { version = "=1.54.1", features = ["full"] }
+axum = "=0.8.9"
+tower-http = { version = "=0.7.1", features = ["cors", "trace"] }
+clap = { version = "=4.6.9", features = ["derive"] }
+tempfile = "=3.27.0"
+# reqwest 0.13 defaults to rustls with aws-lc-rs; keep native-tls like tokio-tungstenite.
+reqwest = { version = "=0.13.5", default-features = false, features = [
+  "charset",
+  "http2",
+  "json",
+  "native-tls",
+  "query",
+  "system-proxy",
+] }
+tokio-tungstenite = { version = "=0.30.0", features = ["native-tls"] }
+futures-util = "=0.3.34"
+sha2 = "=0.11.1"
+hex = "=0.4.3"
+tokio-postgres = "=0.7.18"
+deadpool-postgres = "=0.14.2"
+# 48.x is the Wasmtime LTS line; take only its patch releases.
+wasmtime = { version = "=48.0.10", default-features = false, features = [
   "cranelift",
   "component-model",
   "runtime",
   "std",
 ] }
-wit-parser = { version = "0.236.1", default-features = false, features = ["decoding"] }
-wit-component = { version = "0.236.1", default-features = false }
-wat = "~1.236.1"
+wit-parser = { version = "=0.263.0", default-features = false, features = ["decoding"] }
+wit-component = { version = "=0.263.0", default-features = false }
+wat = "=1.263.0"

@@ -317,7 +317,7 @@ pub fn compile_wat_component(
 
     let world_id = contract
         .resolve()
-        .select_world(contract.package_id(), Some(EXPECTED_VALIDATOR_WORLD))
+        .select_world(&[contract.package_id()], Some(EXPECTED_VALIDATOR_WORLD))
         .map_err(|err| WasmError::ComponentBuild(format!("WIT world lookup failed: {err}")))?;
 
     wit_component::embed_component_metadata(
@@ -325,6 +325,7 @@ pub fn compile_wat_component(
         contract.resolve(),
         world_id,
         wit_component::StringEncoding::UTF8,
+        false, // canonical_names: keep exact versioned names, as before 0.263.
     )
     .map_err(|err| WasmError::ComponentBuild(format!("metadata embed failed: {err}")))?;
 

@@ -6,7 +6,7 @@
   "wit_version": "runlark:workflow@0.1.0",
   "world": "workflow-validator",
   "entrypoint": "validator.wasm",
-  "sha256": "e00c595107e24bc9ba7a74881527cc47c990acf861a8740e935be26dda3e5f82",
+  "sha256": "43bab0c9d1f9e635cb614720df815dfe55226304084d6c81fab8a9e45db8b56e",
   "workflow_path": "workflow.json",
   "workflow_sha256": "8a742851259d62b49eee8e8d85b184748d394226eed61bd16ddd8c0e32df2e28",
   "capabilities": ["log"],
