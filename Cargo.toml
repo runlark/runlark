@@ -58,5 +58,5 @@ wasmtime = { version = "48.0.9", default-features = false, features = [
   "std",
 ] }
 wit-parser = { version = "0.236.1", default-features = false, features = ["decoding"] }
-wit-component = { version = "0.236.1", default-features = false }
+wit-component = { version = "0.254.2", default-features = false }
 wat = "~1.236.1"
