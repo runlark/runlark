@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Dependabot больше не предлагает мажорные обновления React и Mantine: `web/` удаляется вместе с DeepSeek Harness, миграция была бы выброшенной работой.
+
 - Обновлён `url` до `2.5.9` (вместе с требуемым им `form_urlencoded` `1.2.3`) в `Cargo.lock` для закрытия advisory `RUSTSEC-2026-0592`.
 - Обновлены все зависимости и Rust crates закреплены точными версиями `=x.y.z`:
   - Rust: `reqwest` `0.13` (явно `native-tls` вместо нового default rustls/aws-lc-rs, плюс feature `query`), `tokio-tungstenite` `0.30`, `tower-http` `0.7`, `sha2` `0.11`, `wit-parser`/`wit-component` `0.263`, `wat` `1.263`, `wasmtime` LTS `48.0.10`, остальные crates до последних patch/minor; удалены неиспользуемые workspace-зависимости `chrono` и `tower`.
