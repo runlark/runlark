@@ -37,7 +37,7 @@
     "@types/react-dom": "18.3.7",
     "esbuild": "0.28.2",
     "jsdom": "26.1.0",
-    "markdownlint-cli2": "0.24.1",
+    "markdownlint-cli2": "0.24.2",
     "oxfmt": "0.78.0",
     "oxlint": "1.94.0",
     "react": "18.3.1",
