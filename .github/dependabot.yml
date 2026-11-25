@@ -8,6 +8,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # DeepSeek Harness is being removed (docs/adr/0005); its pinned patch breaks on every bump.
+      - dependency-name: "@deepseek-ai/*"
   - package-ecosystem: github-actions
     directory: /
     schedule:
