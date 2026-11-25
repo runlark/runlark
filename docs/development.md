@@ -56,6 +56,6 @@ DSH bridge/controller, Wasmtime/WIT или frontend implementation сверит�
 
 Новый репозиторий публичный; все CI jobs, включая ожидание Sych, работают на стандартных
 GitHub-hosted `ubuntu-24.04`. Личные self-hosted runners и private infrastructure для CI не нужны.
-Лицензия проекта пока не выбрана; лицензии сторонних навыков сохраняются.
+Проект распространяется под лицензией [Apache License 2.0](../LICENSE); лицензии сторонних навыков сохраняются.
 Не коммитить credentials, личные transcripts, production data или local
 checkout paths. Не deploy production, не создавать платные ресурсы и не публиковать images без запроса.
