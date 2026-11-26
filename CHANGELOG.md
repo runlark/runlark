@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Legacy REST-демон больше не отвечает браузерам чужих сайтов (ADR 0001, до удаления REST в #73): убран permissive CORS, запрос с не-loopback `Host` получает `403 forbidden_host`, POST без `Content-Type: application/json` получает `415 json_body_required` до запуска обработчика, а `runlark daemon --host` принимает только `127.0.0.1`/другой loopback IP, `::1` или `localhost` и иначе завершается ошибкой до создания каталога данных. Клиент доски DSH-плагина отправляет `{}` в POST без тела.
 - Dependabot больше не предлагает мажорные обновления React и Mantine: `web/` удаляется вместе с DeepSeek Harness, миграция была бы выброшенной работой.
 - Проект распространяется под лицензией Apache License 2.0: добавлен `LICENSE`, поле `license` в `package.json` и `packages/dsh-plugin/package.json`, обновлены README и `docs/development.md`.
 

@@ -3,9 +3,9 @@ use crate::outbox::{
     HttpDshEffector, LocalBridgeEffector, OutboxConfig, OutboxDispatcher, OutboxEffector,
 };
 use crate::routes::{
-    board, chat, commands, dsh_events, events, health, plugins, projects, questions, run_history,
-    runs, sessions, task_actions, tasks, team, team_comments, team_drafts, team_runners,
-    team_workspaces, verification,
+    board, chat, commands, dsh_events, events, health, local_guard, plugins, projects, questions,
+    run_history, runs, sessions, task_actions, tasks, team, team_comments, team_drafts,
+    team_runners, team_workspaces, verification,
 };
 use crate::runner_agent::RunnerAgentWorker;
 use crate::scheduler::Scheduler;
@@ -13,6 +13,7 @@ use crate::state::AppState;
 use crate::team_sync::TeamSyncWorker;
 use crate::verification::VerificationService;
 use axum::Router;
+use axum::middleware;
 use axum::routing::{delete, get, patch, post};
 use runlark_domain::Timestamp;
 use runlark_local::{ReconciliationEngine, initialize_schema, open_sqlite};
@@ -20,7 +21,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::signal;
 use tokio::sync::watch;
-use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 pub fn build_router(state: AppState) -> Router {
@@ -86,7 +86,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/plugins/validate", post(plugins::validate_plugin))
         .route("/api/v1/dsh/events", post(dsh_events::ingest_dsh_event))
         .merge(team_routes())
-        .layer(CorsLayer::permissive())
+        .layer(middleware::from_fn(local_guard::reject_non_local))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -187,7 +187,8 @@ pub async fn run_daemon(
 /// Runs the Runlark daemon server with an optional explicit DSH URL and launch token.
 ///
 /// # Errors
-/// Returns an error if database initialization, network binding, or server execution fails.
+/// Returns an error if `host` is not `localhost` or a loopback IP (before the data directory is
+/// touched), or if database initialization, network binding, or server execution fails.
 pub async fn run_daemon_with_dsh(
     host: String,
     port: u16,
@@ -195,6 +196,12 @@ pub async fn run_daemon_with_dsh(
     dsh_url: Option<String>,
     dsh_token: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !local_guard::is_loopback_host(&host) {
+        return Err(format!(
+            "refusing {host}: the daemon binds only loopback hosts (127.0.0.1, ::1, localhost)"
+        )
+        .into());
+    }
     let dsh_url = dsh_url.or_else(|| std::env::var("RUNLARK_DSH_URL").ok());
     let dsh_token = dsh_token.or_else(|| std::env::var("RUNLARK_DSH_TOKEN").ok());
     std::fs::create_dir_all(&data_dir)?;
@@ -246,9 +253,11 @@ pub async fn run_daemon_with_dsh(
         None => Arc::new(LocalBridgeEffector),
     };
 
-    let addr = format!("{host}:{port}");
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
-    tracing::info!("Runlark daemon listening on http://{}", addr);
+    let listener = tokio::net::TcpListener::bind((host.as_str(), port)).await?;
+    tracing::info!(
+        "Runlark daemon listening on http://{}",
+        listener.local_addr()?
+    );
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let workers = spawn_daemon_workers(&state, db_path, effector, resolved_dsh, shutdown_rx);

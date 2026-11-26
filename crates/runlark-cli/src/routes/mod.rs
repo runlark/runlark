@@ -5,6 +5,7 @@ pub mod dsh_events;
 pub mod error;
 pub mod events;
 pub mod health;
+pub mod local_guard;
 pub mod plugins;
 pub mod projects;
 pub mod questions;
