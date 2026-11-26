@@ -225,3 +225,34 @@ test("UsageBridge preserves missing cost as null UnknownCost and never folds int
     await new Promise<void>((r) => server.close(() => r()));
   }
 });
+
+test("DaemonBoardClient sends {} as JSON when a proxied POST has no body", async () => {
+  const seen: { method?: string; contentType?: string; body: string }[] = [];
+  const server = http.createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    seen.push({
+      method: req.method,
+      contentType: req.headers["content-type"],
+      body: Buffer.concat(chunks).toString("utf8"),
+    });
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end("{}");
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const addr = server.address();
+  assert.ok(addr && typeof addr === "object");
+  try {
+    const client = new DaemonBoardClient(`http://127.0.0.1:${addr.port}`);
+    // A proxied route forwards whatever body the browser sent, which can be none.
+    await client.taskAction("tsk_1", "start", undefined as unknown as Record<string, unknown>);
+    await client.getTask("tsk_1");
+    assert.deepEqual(seen, [
+      { method: "POST", contentType: "application/json", body: "{}" },
+      { method: "GET", contentType: undefined, body: "" },
+    ]);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+});

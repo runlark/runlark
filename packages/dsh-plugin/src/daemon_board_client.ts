@@ -49,10 +49,12 @@ export class DaemonBoardClient {
     body?: unknown,
     signal?: AbortSignal,
   ): Promise<{ readonly status: number; readonly data: T }> {
+    // The daemon refuses a POST without a JSON body (cross-origin "simple" requests).
+    const payload = body === undefined && method === "POST" ? {} : body;
     const res = await fetch(`${this.baseUrl}${path}`, {
       method,
-      headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      headers: payload !== undefined ? { "Content-Type": "application/json" } : undefined,
+      body: payload !== undefined ? JSON.stringify(payload) : undefined,
       ...(signal ? { signal } : {}),
     });
     const text = await res.text();

@@ -32,6 +32,7 @@ pub struct Cli {
 pub enum Commands {
     /// Start the Runlark local daemon process
     Daemon {
+        /// Host to listen on: `localhost` or a loopback IP such as `127.0.0.1` or `::1`
         #[arg(long, default_value = "127.0.0.1")]
         host: String,
         #[arg(short, long, default_value_t = 9876)]
