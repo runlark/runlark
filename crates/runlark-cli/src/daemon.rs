@@ -198,7 +198,7 @@ pub async fn run_daemon_with_dsh(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if !local_guard::is_loopback_host(&host) {
         return Err(format!(
-            "refusing {host}: the daemon binds only loopback hosts (127.0.0.1, ::1, localhost)"
+            "refusing {host}: the daemon binds only localhost or a loopback IP (127.0.0.1, ::1)"
         )
         .into());
     }

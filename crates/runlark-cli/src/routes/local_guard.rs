@@ -17,7 +17,7 @@ pub async fn reject_non_local(request: Request, next: Next) -> Response {
         return api_error(
             StatusCode::FORBIDDEN,
             "forbidden_host",
-            "the daemon serves only loopback Host names (127.0.0.1, localhost or [::1])",
+            "the daemon serves only loopback Host names (localhost or a loopback IP)",
         )
         .into_response();
     }
@@ -49,7 +49,10 @@ fn is_loopback_authority(value: &HeaderValue) -> bool {
         return false;
     };
     let host = match authority.strip_prefix('[') {
-        Some(bracketed) => bracketed.split_once(']').map(|(ip, _)| ip),
+        Some(bracketed) => bracketed
+            .split_once(']')
+            .filter(|(_, rest)| rest.is_empty() || rest.starts_with(':'))
+            .map(|(ip, _)| ip),
         None => Some(
             authority
                 .split_once(':')
@@ -110,6 +113,7 @@ mod tests {
         for value in [
             "::1",
             "[::1",
+            "[::1]evil.example",
             "example.invalid:9876",
             "127.0.0.1.nip.io:9876",
             ":9876",

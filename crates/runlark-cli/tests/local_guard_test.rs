@@ -23,7 +23,12 @@ fn git(dir: &Path, args: &[&str]) {
         .args(args)
         .output()
         .expect("spawn git");
-    assert!(out.status.success(), "git {args:?} failed");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 fn package_dir() -> PathBuf {
